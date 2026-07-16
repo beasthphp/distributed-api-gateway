@@ -1,0 +1,90 @@
+name: distributed-api-gateway
+
+services:
+  redis:
+    image: redis:8.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  user-service:
+    build:
+      context: .
+      args:
+        SERVICE: user-service
+    environment:
+      PORT: "8081"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  order-service:
+    build:
+      context: .
+      args:
+        SERVICE: order-service
+    environment:
+      PORT: "8082"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      args:
+        SERVICE: gateway
+    environment:
+      LISTEN_ADDR: ":8080"
+      USER_SERVICE_URL: "http://user-service:8081"
+      ORDER_SERVICE_URL: "http://order-service:8082"
+      REDIS_ADDR: "redis:6379"
+      API_KEYS: "${API_KEYS:-dev-key-change-me}"
+      RATE_LIMIT_REQUESTS: "${RATE_LIMIT_REQUESTS:-20}"
+      RATE_LIMIT_WINDOW: "${RATE_LIMIT_WINDOW:-1m}"
+      RATE_LIMIT_FAIL_OPEN: "false"
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  prometheus-data:

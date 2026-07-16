@@ -1,0 +1,50 @@
+# Roadmap
+
+## Phase 1 — Gateway foundation
+
+- [x] Go reverse proxy
+- [x] API-key authentication
+- [x] Atomic Redis fixed-window rate limiting
+- [x] User and order mock services
+- [x] Request IDs and structured logs
+- [x] Liveness, readiness, and Prometheus metrics
+- [x] Docker Compose, unit tests, and CI
+
+## Phase 2 — Policies and persistence
+
+- [ ] PostgreSQL schema for clients, hashed API keys, plans, and revocation
+- [ ] Admin CLI or endpoint for issuing and revoking keys
+- [ ] Per-client and per-route quotas
+- [ ] Token-bucket Redis Lua implementation
+- [ ] Integration and concurrency tests against real Redis
+
+## Phase 3 — Asynchronous usage logging
+
+- [ ] Bounded event queue between request handling and usage persistence
+- [ ] Worker with batching, retry, and dead-letter behavior
+- [ ] PostgreSQL usage aggregates
+- [ ] Backpressure and queue-depth metrics
+
+## Phase 4 — Deployment and monitoring
+
+- [ ] Nginx reverse proxy and HTTPS certificate
+- [ ] VPS deployment with private service networking
+- [ ] Grafana dashboard for traffic, latency, errors, and rate-limit denials
+- [ ] Redis and host exporters
+- [ ] Alert rules and a failure runbook
+
+## Phase 5 — Performance evidence
+
+- [ ] Go load generator for repeatable end-to-end tests
+- [ ] C++ benchmark client for latency/throughput comparison
+- [ ] p50, p95, and p99 latency report
+- [ ] Single-instance versus multi-instance measurements
+- [ ] Documented bottlenecks and optimization decisions
+
+## Phase 6 — Portfolio finish
+
+- [ ] OpenAPI specification and hosted docs
+- [ ] Architecture and dashboard screenshots
+- [ ] Short demo recording
+- [ ] Resume bullets using only measured results
+- [ ] Interview question-and-answer notes
