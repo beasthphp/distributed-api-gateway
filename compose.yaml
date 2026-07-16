@@ -84,6 +84,12 @@ services:
       DATABASE_URL: "postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable"
       API_KEY_PEPPER: "${API_KEY_PEPPER:-dev-only-pepper-change-me}"
       RATE_LIMIT_FAIL_OPEN: "false"
+      USAGE_QUEUE_CAPACITY: "${USAGE_QUEUE_CAPACITY:-1024}"
+      USAGE_BATCH_SIZE: "${USAGE_BATCH_SIZE:-100}"
+      USAGE_FLUSH_INTERVAL: "${USAGE_FLUSH_INTERVAL:-1s}"
+      USAGE_MAX_ATTEMPTS: "${USAGE_MAX_ATTEMPTS:-3}"
+      USAGE_RETRY_BASE_DELAY: "${USAGE_RETRY_BASE_DELAY:-100ms}"
+      USAGE_SHUTDOWN_TIMEOUT: "${USAGE_SHUTDOWN_TIMEOUT:-5s}"
     ports:
       - "8080:8080"
     depends_on:

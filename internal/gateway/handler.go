@@ -18,6 +18,7 @@ import (
 	"github.com/beasthphp/distributed-api-gateway/internal/config"
 	"github.com/beasthphp/distributed-api-gateway/internal/metrics"
 	"github.com/beasthphp/distributed-api-gateway/internal/ratelimit"
+	"github.com/beasthphp/distributed-api-gateway/internal/usage"
 )
 
 type contextKey string
@@ -25,6 +26,7 @@ type contextKey string
 const (
 	principalContextKey contextKey = "principal"
 	requestIDContextKey contextKey = "request-id"
+	usageContextKey     contextKey = "usage-capture"
 )
 
 type HealthCheck struct {
@@ -40,6 +42,7 @@ type Dependencies struct {
 	Auth      auth.Authenticator
 	Readiness []HealthCheck
 	Metrics   *metrics.Registry
+	Usage     usage.Recorder
 	Logger    *slog.Logger
 }
 
@@ -49,6 +52,7 @@ type handler struct {
 	auth       auth.Authenticator
 	readiness  []HealthCheck
 	metrics    *metrics.Registry
+	usage      usage.Recorder
 	logger     *slog.Logger
 	userProxy  *httputil.ReverseProxy
 	orderProxy *httputil.ReverseProxy
@@ -86,6 +90,7 @@ func NewHandler(deps Dependencies) (http.Handler, error) {
 		auth:       deps.Auth,
 		readiness:  deps.Readiness,
 		metrics:    deps.Metrics,
+		usage:      deps.Usage,
 		logger:     deps.Logger,
 		userProxy:  newProxy("user-service", userTarget, deps.Logger),
 		orderProxy: newProxy("order-service", orderTarget, deps.Logger),
@@ -188,6 +193,9 @@ func (h *handler) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), principalContextKey, principal)
+		if capture, ok := ctx.Value(usageContextKey).(*usageCapture); ok {
+			capture.principal = principal
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -254,10 +262,13 @@ func (h *handler) instrument(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		capture := &usageCapture{}
+		r = r.WithContext(context.WithValue(r.Context(), usageContextKey, capture))
 		finish := h.metrics.Begin()
 		defer func() {
 			duration := time.Since(started)
 			finish(recorder.status, duration)
+			h.enqueueUsage(r, capture.principal, recorder, started, duration)
 
 			h.logger.Info("request completed",
 				"request_id", requestIDFromContext(r.Context()),
@@ -270,6 +281,33 @@ func (h *handler) instrument(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(recorder, r)
 	})
+}
+
+func (h *handler) enqueueUsage(r *http.Request, principal auth.Principal, recorder *statusRecorder, started time.Time, duration time.Duration) {
+	if h.usage == nil || principal.KeyID == "" || principal.ClientID == "" {
+		return
+	}
+	eventID, err := usage.NewEventID()
+	if err != nil {
+		h.logger.Error("generate usage event ID", "request_id", requestIDFromContext(r.Context()), "error", err)
+		return
+	}
+	h.usage.Enqueue(usage.Event{
+		ID:             eventID,
+		RequestID:      requestIDFromContext(r.Context()),
+		APIKeyID:       principal.KeyID,
+		ClientID:       principal.ClientID,
+		Route:          routeKey(r.URL.Path),
+		Method:         r.Method,
+		StatusCode:     recorder.status,
+		DurationMicros: duration.Microseconds(),
+		ResponseBytes:  int64(recorder.bytes),
+		OccurredAt:     started.UTC(),
+	})
+}
+
+type usageCapture struct {
+	principal auth.Principal
 }
 
 func (h *handler) recoverPanic(next http.Handler) http.Handler {

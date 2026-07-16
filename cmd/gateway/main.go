@@ -16,6 +16,7 @@ import (
 	"github.com/beasthphp/distributed-api-gateway/internal/metrics"
 	"github.com/beasthphp/distributed-api-gateway/internal/ratelimit"
 	"github.com/beasthphp/distributed-api-gateway/internal/store"
+	"github.com/beasthphp/distributed-api-gateway/internal/usage"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -56,6 +57,18 @@ func main() {
 	}()
 
 	limiter := ratelimit.NewRedisLimiter(redisClient, cfg.RateLimitPrefix)
+	registry := metrics.NewRegistry()
+	usagePipeline, err := usage.NewPipeline(postgresStore, usage.Config{
+		QueueCapacity:  cfg.UsageQueueCapacity,
+		BatchSize:      cfg.UsageBatchSize,
+		FlushInterval:  cfg.UsageFlushInterval,
+		MaxAttempts:    cfg.UsageMaxAttempts,
+		RetryBaseDelay: cfg.UsageRetryBaseDelay,
+	}, registry, logger)
+	if err != nil {
+		logger.Error("build usage pipeline", "error", err)
+		os.Exit(1)
+	}
 	handler, err := gateway.NewHandler(gateway.Dependencies{
 		Config:  cfg,
 		Limiter: limiter,
@@ -64,10 +77,14 @@ func main() {
 			{Name: "Redis", Checker: limiter},
 			{Name: "PostgreSQL", Checker: postgresStore},
 		},
-		Metrics: metrics.NewRegistry(),
+		Metrics: registry,
+		Usage:   usagePipeline,
 		Logger:  logger,
 	})
 	if err != nil {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), cfg.UsageShutdownTimeout)
+		_ = usagePipeline.Close(closeCtx)
+		closeCancel()
 		logger.Error("build gateway handler", "error", err)
 		os.Exit(1)
 	}
@@ -98,6 +115,12 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
+		os.Exit(1)
+	}
+	usageShutdownCtx, usageShutdownCancel := context.WithTimeout(context.Background(), cfg.UsageShutdownTimeout)
+	defer usageShutdownCancel()
+	if err := usagePipeline.Close(usageShutdownCtx); err != nil {
+		logger.Error("flush usage pipeline", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("gateway stopped")

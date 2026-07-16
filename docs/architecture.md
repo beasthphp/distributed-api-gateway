@@ -1,8 +1,8 @@
 # Architecture and design notes
 
-## Phase 1 boundary
+## Current Phase 3 boundary
 
-Phase 1 establishes a small but defensible request path:
+The current milestone extends the authenticated request path with bounded asynchronous usage processing:
 
 ```mermaid
 sequenceDiagram
@@ -11,6 +11,8 @@ sequenceDiagram
     participant P as PostgreSQL
     participant R as Redis
     participant S as Service
+    participant Q as Usage queue
+    participant W as Batch worker
     C->>G: Request + X-API-Key
     G->>G: HMAC supplied key
     G->>P: Active digest + route lookup
@@ -24,6 +26,10 @@ sequenceDiagram
     else quota exceeded
         G-->>C: 429 + Retry-After
     end
+    G->>Q: Non-blocking normalized usage event
+    Note over G,Q: Full queue drops and counts the event
+    W->>Q: Drain bounded batch
+    W->>P: Idempotent events + hourly aggregates
 ```
 
 ## Components
@@ -40,6 +46,7 @@ Middleware responsibilities are separated:
 4. API-key authentication
 5. Distributed rate limiting
 6. Route selection and reverse proxying
+7. Non-blocking usage emission after the outcome is known
 
 ### PostgreSQL authentication and policy
 
@@ -63,9 +70,17 @@ Lua execution is atomic in Redis, preventing races between gateway processes. Bu
 
 Routes are selected by stable path prefixes. The gateway preserves the request path, sets the upstream host, forwards the request ID, and converts connection failures into a consistent `502` JSON response.
 
+### Asynchronous usage pipeline
+
+Authenticated request outcomes are copied into privacy-conscious events containing internal client/key IDs, normalized route, method, status, duration, byte count, and occurrence time. API keys, query strings, headers, and bodies never enter the pipeline.
+
+Admission uses a non-blocking send to a bounded channel. A full channel increments a drop counter while leaving request latency unchanged. One worker drains batches by size or time, retries transient PostgreSQL failures with bounded exponential backoff, and writes terminal failures to `usage_dead_letters`.
+
+Each event has a random UUID. PostgreSQL inserts raw events with a conflict guard and derives hourly aggregate changes only from rows inserted by that statement. Retrying a partially uncertain batch therefore cannot double-count it.
+
 ### Observability
 
-The gateway exposes Prometheus text-format counters and a gauge. Labels are intentionally bounded to status codes. API keys, request IDs, and unnormalized resource paths would create unbounded cardinality and are therefore excluded.
+The gateway exposes Prometheus text-format counters and gauges. Labels are intentionally bounded to status codes. API keys, request IDs, and unnormalized resource paths would create unbounded cardinality and are therefore excluded. Usage metrics expose queue depth, admission, drops, retries, persisted batches/events, and dead-letter outcomes without per-client labels.
 
 Liveness only confirms that the process can serve HTTP. Readiness pings Redis and PostgreSQL because the gateway requires both dependencies before it should receive protected traffic.
 
@@ -79,6 +94,10 @@ Liveness only confirms that the process can serve HTTP. Readiness pings Redis an
 | Redis unavailable | `503` | Enforcement dependency unavailable |
 | Upstream unavailable | `502` | Gateway could not obtain an upstream response |
 | Unknown API path | `404` | No route is configured |
+| Usage queue full | API response is unchanged | Event is dropped and counted; latency and memory remain bounded |
+| Usage write fails transiently | API response is unchanged | Worker retries the idempotent batch with exponential backoff |
+| Usage retries exhausted | API response is unchanged | Events move to PostgreSQL dead-letter storage |
+| Dead-letter write fails | API response is unchanged | Events are counted as dropped and an error is logged |
 
 `RATE_LIMIT_FAIL_OPEN=true` is available for experiments, but the default is fail closed. In a real service, this choice depends on whether availability or quota/security enforcement has higher business priority.
 
@@ -90,7 +109,8 @@ Liveness only confirms that the process can serve HTTP. Readiness pings Redis an
 - `/metrics` should be network-restricted rather than publicly exposed.
 - Redis and upstream services should only be reachable on private networks.
 - Request bodies and API keys are not written to logs.
+- Usage rows contain normalized routes and internal UUIDs, never raw keys, query strings, headers, or bodies.
 
 ## Scaling path
 
-The next deployment topology places Nginx and two or more gateway replicas on the VPS, sharing Redis and PostgreSQL. Laptop-hosted upstream services connect through Tailscale during the demonstration phase. Production services would normally run in the same private infrastructure rather than on a personal laptop.
+The next deployment topology places Nginx and two or more gateway replicas on the VPS, sharing Redis and PostgreSQL. Each replica currently has its own bounded in-memory usage queue; idempotent UUID storage remains safe across replicas. Laptop-hosted upstream services connect through Tailscale during the demonstration phase. Production services would normally run in the same private infrastructure rather than on a personal laptop.
