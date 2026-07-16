@@ -4,6 +4,16 @@ on:
   workflow_dispatch:
   push:
     branches: [agent/phase-5-performance-evidence]
+  pull_request:
+    paths:
+      - ".github/workflows/benchmark.yml"
+      - "benchmarks/**"
+      - "cmd/benchreport/**"
+      - "cmd/loadgen/**"
+      - "compose.benchmark.yaml"
+      - "deploy/nginx/benchmark.conf"
+      - "internal/benchmark/**"
+      - "scripts/run-benchmarks.sh"
 
 permissions:
   contents: read
