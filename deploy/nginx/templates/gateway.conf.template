@@ -1,0 +1,81 @@
+log_format gateway_json escape=json
+    '{"time":"$time_iso8601","remote_addr":"$remote_addr",'
+    '"request_id":"$request_id","method":"$request_method",'
+    '"path":"$uri","status":$status,"bytes":$body_bytes_sent,'
+    '"duration":$request_time,"upstream_duration":"$upstream_response_time"}';
+
+limit_req_zone $binary_remote_addr zone=edge_per_ip:10m rate=30r/s;
+
+upstream gateway_backend {
+    server gateway:8080;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${GATEWAY_DOMAIN};
+    server_tokens off;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+    }
+
+    location = /nginx-health {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${GATEWAY_DOMAIN};
+    server_tokens off;
+
+    ssl_certificate /etc/letsencrypt/live/${GATEWAY_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${GATEWAY_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:TLS:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+
+    access_log /var/log/nginx/access.log gateway_json;
+    error_log /var/log/nginx/error.log warn;
+
+    client_max_body_size 1m;
+    keepalive_timeout 65s;
+
+    location = /metrics {
+        return 404;
+    }
+
+    location / {
+        limit_req zone=edge_per_ip burst=60 nodelay;
+        limit_req_status 429;
+
+        proxy_pass http://gateway_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+    }
+}

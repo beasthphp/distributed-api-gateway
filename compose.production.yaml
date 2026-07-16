@@ -1,0 +1,228 @@
+name: distributed-api-gateway-production
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:?set POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB:?set POSTGRES_DB}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+
+  redis:
+    image: redis:8.4-alpine
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?set REDIS_PASSWORD}"
+      REDIS_MAXMEMORY: "${REDIS_MAXMEMORY:-256mb}"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        printf 'appendonly yes\nrequirepass %s\nmaxmemory %s\nmaxmemory-policy noeviction\n' "$$REDIS_PASSWORD" "$$REDIS_MAXMEMORY" > /tmp/redis.conf
+        exec redis-server /tmp/redis.conf
+    tmpfs: [/tmp]
+    volumes:
+      - redis-data:/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+
+  gateway-admin:
+    build:
+      context: .
+      args:
+        SERVICE: gateway-admin
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: "${DATABASE_URL:?set DATABASE_URL}"
+      API_KEY_PEPPER: "${API_KEY_PEPPER:?set API_KEY_PEPPER}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    restart: "no"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  gateway:
+    build:
+      context: .
+      args:
+        SERVICE: gateway
+    environment:
+      LISTEN_ADDR: ":8080"
+      USER_SERVICE_URL: "${USER_SERVICE_URL:?set USER_SERVICE_URL}"
+      ORDER_SERVICE_URL: "${ORDER_SERVICE_URL:?set ORDER_SERVICE_URL}"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?set REDIS_PASSWORD}"
+      DATABASE_URL: "${DATABASE_URL:?set DATABASE_URL}"
+      API_KEY_PEPPER: "${API_KEY_PEPPER:?set API_KEY_PEPPER}"
+      RATE_LIMIT_FAIL_OPEN: "false"
+      USAGE_QUEUE_CAPACITY: "${USAGE_QUEUE_CAPACITY:-4096}"
+      USAGE_BATCH_SIZE: "${USAGE_BATCH_SIZE:-200}"
+      USAGE_FLUSH_INTERVAL: "${USAGE_FLUSH_INTERVAL:-1s}"
+      USAGE_MAX_ATTEMPTS: "${USAGE_MAX_ATTEMPTS:-4}"
+      USAGE_RETRY_BASE_DELAY: "${USAGE_RETRY_BASE_DELAY:-100ms}"
+      USAGE_SHUTDOWN_TIMEOUT: "${USAGE_SHUTDOWN_TIMEOUT:-10s}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      gateway-admin:
+        condition: service_completed_successfully
+    networks: [backend, monitoring]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  nginx:
+    image: nginx:1.31.2-alpine
+    environment:
+      GATEWAY_DOMAIN: "${GATEWAY_DOMAIN:?set GATEWAY_DOMAIN}"
+    volumes:
+      - ./deploy/nginx/templates/gateway.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - certbot-www:/var/www/certbot:ro
+      - letsencrypt:/etc/letsencrypt:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [edge, backend]
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/etc/nginx/conf.d, /var/cache/nginx, /var/run]
+    security_opt: ["no-new-privileges:true"]
+
+  certbot:
+    image: certbot/certbot:v5.6.0
+    profiles: [tools]
+    volumes:
+      - certbot-www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+    networks: [edge]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.86.0
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?set REDIS_PASSWORD}"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [backend, monitoring]
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    environment:
+      DATA_SOURCE_NAME: "${DATABASE_URL:?set DATABASE_URL}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend, monitoring]
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($$|/)
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks: [monitoring]
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.28.0
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./deploy/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    networks: [monitoring]
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.production.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./deploy/prometheus/prometheus.production.yml:/etc/prometheus/prometheus.production.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - gateway
+      - redis-exporter
+      - postgres-exporter
+      - node-exporter
+      - blackbox-exporter
+    networks: [monitoring]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:?set GRAFANA_ADMIN_USER}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [prometheus]
+    networks: [monitoring]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  edge:
+  backend:
+  monitoring:
+
+volumes:
+  postgres-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  certbot-www:
+  letsencrypt:

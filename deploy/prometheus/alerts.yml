@@ -1,0 +1,132 @@
+groups:
+  - name: gateway
+    rules:
+      - alert: GatewayMetricsDown
+        expr: up{job="api-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Gateway metrics endpoint is unreachable
+          description: Prometheus has been unable to scrape the gateway for two minutes.
+
+      - alert: GatewayNotReady
+        expr: up{job="gateway-readiness"} == 0 or probe_success{job="gateway-readiness"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Gateway readiness is failing
+          description: Redis or PostgreSQL may be unavailable to the gateway.
+
+      - alert: GatewayHighErrorRatio
+        expr: sum(rate(gateway_http_responses_total{code=~"5.."}[5m])) / clamp_min(sum(rate(gateway_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Gateway 5xx ratio is above 5 percent
+          description: Inspect dependency health and upstream 502 responses before rolling back.
+
+      - alert: GatewayRateLimitSpike
+        expr: sum(increase(gateway_http_responses_total{code="429"}[5m])) > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Rate-limit denials are elevated
+          description: More than 25 gateway requests were denied in a five-minute window.
+
+      - alert: UsageQueueNearCapacity
+        expr: gateway_usage_queue_depth / clamp_min(gateway_usage_queue_capacity, 1) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Usage queue is above 80 percent capacity
+          description: PostgreSQL persistence may be slower than event admission.
+
+      - alert: UsageEventsDropped
+        expr: increase(gateway_usage_events_dropped_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Usage events have been dropped
+          description: Check queue saturation, shutdown deadlines, and dead-letter failures.
+
+      - alert: UsagePersistenceRetrying
+        expr: increase(gateway_usage_retries_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Usage persistence is repeatedly retrying
+          description: Check PostgreSQL latency and connection availability.
+
+  - name: dependencies
+    rules:
+      - alert: RedisUnavailable
+        expr: redis_up == 0 or up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Redis is unavailable
+          description: Rate limiting fails closed while Redis is unavailable.
+
+      - alert: RedisMemoryNearLimit
+        expr: redis_memory_max_bytes > 0 and redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis is above 85 percent of maxmemory
+          description: Inspect rate-limit key growth before Redis reaches its noeviction limit.
+
+      - alert: PostgreSQLUnavailable
+        expr: pg_up == 0 or up{job="postgres"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: PostgreSQL is unavailable
+          description: Authentication and usage persistence require PostgreSQL.
+
+  - name: host
+    rules:
+      - alert: HostExporterDown
+        expr: up{job="host"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: VPS host metrics are unavailable
+          description: Node exporter has not been scraped for five minutes.
+
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: VPS available memory is below 10 percent
+          description: Inspect container memory usage and PostgreSQL or Redis growth.
+
+      - alert: HostRootDiskLow
+        expr: node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} < 0.1
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: VPS root filesystem has less than 10 percent free
+          description: Check container logs, Prometheus retention, and PostgreSQL backups.
+
+      - alert: PrometheusRuleEvaluationFailures
+        expr: increase(prometheus_rule_evaluation_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Prometheus alert rule evaluation is failing
+          description: Validate the rules and inspect Prometheus logs.

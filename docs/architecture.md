@@ -1,8 +1,28 @@
 # Architecture and design notes
 
-## Current Phase 3 boundary
+## Current Phase 4 boundary
 
-The current milestone extends the authenticated request path with bounded asynchronous usage processing:
+The current milestone places the authenticated request path behind a public TLS edge and adds a private monitoring plane:
+
+```mermaid
+flowchart LR
+    I[Internet] -->|80/443| N[Nginx + Certbot webroot]
+    N --> G[Go gateway]
+    G --> R[(Redis)]
+    G --> P[(PostgreSQL)]
+    G -->|Tailscale/private network| U[User and order services]
+    G -. metrics .-> M[Prometheus]
+    R -. redis exporter .-> M
+    P -. postgres exporter .-> M
+    H[VPS node exporter] -.-> M
+    B[Blackbox readiness probe] -.-> M
+    M --> D[Grafana on 127.0.0.1]
+    M --> A[Alert rules]
+```
+
+Nginx is the only service with public host bindings. Grafana has a loopback-only binding for SSH forwarding. The remaining services communicate on purpose-specific Docker networks without published ports.
+
+The protected request and usage path remains:
 
 ```mermaid
 sequenceDiagram
@@ -84,6 +104,16 @@ The gateway exposes Prometheus text-format counters and gauges. Labels are inten
 
 Liveness only confirms that the process can serve HTTP. Readiness pings Redis and PostgreSQL because the gateway requires both dependencies before it should receive protected traffic.
 
+Prometheus scrapes the private gateway metrics endpoint, blackbox readiness, Redis, PostgreSQL, and the VPS host. The provisioned Grafana dashboard visualizes traffic, average latency, status codes, rate-limit denials, usage-queue saturation, dependency availability, and host/Redis saturation. Versioned Prometheus rules turn sustained dependency, error, capacity, and usage-loss conditions into alerts.
+
+Average latency is shown because the current dependency-free gateway registry exposes a duration sum and request counter. Phase 5 will add distribution buckets and measured p50/p95/p99 evidence rather than implying percentile precision that is not yet available.
+
+### Production edge and operations
+
+Nginx terminates TLS 1.2/1.3, redirects HTTP except for ACME challenges, adds security headers, applies a coarse per-source-IP edge limit, propagates request IDs, and blocks public `/metrics` access. The gateway retains authoritative per-key/per-route quota enforcement.
+
+Certbot uses a webroot shared only with Nginx. A bootstrap Compose file solves the first-certificate dependency cycle; subsequent renewal reloads Nginx without rebuilding the stack. Deployment scripts validate configuration, wait for health, and probe public HTTPS. Backups use PostgreSQL's custom format plus a SHA-256 checksum and must be copied to encrypted off-host storage.
+
 ## Failure behavior
 
 | Failure | Gateway response | Reasoning |
@@ -94,6 +124,8 @@ Liveness only confirms that the process can serve HTTP. Readiness pings Redis an
 | Redis unavailable | `503` | Enforcement dependency unavailable |
 | Upstream unavailable | `502` | Gateway could not obtain an upstream response |
 | Unknown API path | `404` | No route is configured |
+| TLS certificate or Nginx failure | Connection/edge failure | Public traffic stops without exposing the private gateway port |
+| Private upstream/Tailscale failure | `502` | Gateway is healthy enough to respond but cannot reach the selected service |
 | Usage queue full | API response is unchanged | Event is dropped and counted; latency and memory remain bounded |
 | Usage write fails transiently | API response is unchanged | Worker retries the idempotent batch with exponential backoff |
 | Usage retries exhausted | API response is unchanged | Events move to PostgreSQL dead-letter storage |
@@ -103,14 +135,17 @@ Liveness only confirms that the process can serve HTTP. Readiness pings Redis an
 
 ## Security notes
 
-- HTTPS terminates at Nginx in the deployment milestone.
+- HTTPS terminates at Nginx; only ports 80 and 443 are published by the application stack.
 - Development keys must be replaced before internet exposure.
 - API keys are generated with 256 bits of entropy and stored only as peppered HMAC digests with metadata and revocation state.
-- `/metrics` should be network-restricted rather than publicly exposed.
-- Redis and upstream services should only be reachable on private networks.
+- `/metrics` returns `404` at the public edge and is scraped on a private monitoring network.
+- Redis, PostgreSQL, Prometheus, exporters, and upstream services are reachable only on private networks; Grafana binds to VPS loopback.
 - Request bodies and API keys are not written to logs.
 - Usage rows contain normalized routes and internal UUIDs, never raw keys, query strings, headers, or bodies.
+- Production Compose runs migrations but never development bootstrap, and its example environment contains no development API key.
 
 ## Scaling path
 
-The next deployment topology places Nginx and two or more gateway replicas on the VPS, sharing Redis and PostgreSQL. Each replica currently has its own bounded in-memory usage queue; idempotent UUID storage remains safe across replicas. Laptop-hosted upstream services connect through Tailscale during the demonstration phase. Production services would normally run in the same private infrastructure rather than on a personal laptop.
+The current VPS topology runs one gateway replica behind Nginx, sharing Redis and PostgreSQL with the private monitoring plane. A later topology can add gateway replicas behind the existing Nginx upstream. Each replica has its own bounded in-memory usage queue; idempotent UUID storage remains safe across replicas. Laptop-hosted upstream services connect through Tailscale for the demonstration, while a real production system would normally keep them in the same private infrastructure.
+
+Phase 5 will measure the single-instance baseline before changing replica count, persistence tuning, or metric distributions, so optimization claims remain evidence-based.

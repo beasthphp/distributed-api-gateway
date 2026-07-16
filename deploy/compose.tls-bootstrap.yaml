@@ -1,0 +1,42 @@
+name: distributed-api-gateway-production
+
+services:
+  nginx-bootstrap:
+    image: nginx:1.31.2-alpine
+    environment:
+      GATEWAY_DOMAIN: "${GATEWAY_DOMAIN:?set GATEWAY_DOMAIN}"
+    volumes:
+      - ./nginx/templates/bootstrap.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - certbot-www:/var/www/certbot:ro
+    ports: ["80:80"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/etc/nginx/conf.d, /var/cache/nginx, /var/run]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/nginx-health"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  certbot:
+    image: certbot/certbot:v5.6.0
+    environment:
+      GATEWAY_DOMAIN: "${GATEWAY_DOMAIN:?set GATEWAY_DOMAIN}"
+      LETSENCRYPT_EMAIL: "${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL}"
+      CERTBOT_STAGING: "${CERTBOT_STAGING:-0}"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        staging=''
+        if [ "$$CERTBOT_STAGING" = '1' ]; then staging='--staging'; fi
+        exec certbot certonly --webroot --webroot-path /var/www/certbot \
+          --domain "$$GATEWAY_DOMAIN" --email "$$LETSENCRYPT_EMAIL" \
+          --agree-tos --non-interactive --keep-until-expiring $$staging
+    volumes:
+      - certbot-www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+
+volumes:
+  certbot-www:
+  letsencrypt:

@@ -58,3 +58,4 @@ Revocation is checked in PostgreSQL on every request and therefore has no gatewa
 - Use TLS for PostgreSQL connections outside a private local network.
 - Restrict the admin binary to operators; do not expose it as a public endpoint.
 - Back up PostgreSQL and test key revocation during deployment verification.
+- Use `docker compose --env-file .env.production -f compose.production.yaml run --rm gateway-admin COMMAND` on the VPS; production startup runs `migrate`, never `bootstrap`.
