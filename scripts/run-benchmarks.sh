@@ -33,9 +33,23 @@ cleanup() {
         compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fi
 }
-trap cleanup EXIT INT TERM
 
 mkdir -p "$output/raw" "$output/analysis" bin
+finish() {
+    status=$?
+    trap - EXIT INT TERM
+    if [ "$status" -ne 0 ]; then
+        {
+            printf 'benchmark failed with status %s\n' "$status"
+            compose ps --all
+            compose logs --no-color
+        } >"$output/diagnostics.log" 2>&1 || true
+    fi
+    cleanup
+    exit "$status"
+}
+trap finish EXIT INT TERM
+
 go build -trimpath -o bin/loadgen ./cmd/loadgen
 g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic \
     benchmarks/cpp/main.cpp -o bin/cpp-benchmark -pthread $(curl-config --cflags --libs)
