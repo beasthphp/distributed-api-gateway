@@ -75,7 +75,7 @@ fi
 scale_gateway() {
     instances=$1
     compose up -d --scale "gateway=$instances" --wait --wait-timeout 180 gateway
-    compose up -d --force-recreate --wait --wait-timeout 90 benchmark-proxy
+    compose up -d --no-deps --force-recreate --wait --wait-timeout 90 benchmark-proxy
     curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/nginx-health >/dev/null
 }
 
