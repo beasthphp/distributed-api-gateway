@@ -1,0 +1,35 @@
+name: Benchmark evidence
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/phase-5-performance-evidence]
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run repeatable benchmark matrix
+        run: sh scripts/run-benchmarks.sh results/github-actions
+
+      - name: Upload raw evidence and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-evidence-${{ github.run_id }}
+          path: results/github-actions
+          if-no-files-found: error
+          retention-days: 14

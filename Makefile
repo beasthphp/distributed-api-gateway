@@ -1,6 +1,7 @@
 PROD_ENV ?= .env.production
+BENCH_OUTPUT ?= results/current
 
-.PHONY: test vet run migrate bootstrap up down logs smoke prod-validate prod-tls-init prod-up prod-down prod-logs prod-renew prod-backup
+.PHONY: test vet run migrate bootstrap up down logs smoke benchmark bench-report prod-validate prod-tls-init prod-up prod-down prod-logs prod-renew prod-backup
 
 test:
 	go test -race ./...
@@ -28,6 +29,12 @@ logs:
 
 smoke:
 	sh scripts/smoke-test.sh
+
+benchmark:
+	sh scripts/run-benchmarks.sh $(BENCH_OUTPUT)
+
+bench-report:
+	go run ./cmd/benchreport --input $(BENCH_OUTPUT)/raw --output $(BENCH_OUTPUT)/analysis
 
 prod-validate:
 	sh scripts/validate-production.sh $(PROD_ENV)
