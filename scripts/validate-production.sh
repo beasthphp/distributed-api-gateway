@@ -44,6 +44,7 @@ openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
     -out "$cert_root/live/$GATEWAY_DOMAIN/fullchain.pem" >/dev/null 2>&1
 
 docker run --rm \
+    --add-host gateway:127.0.0.1 \
     -e "GATEWAY_DOMAIN=$GATEWAY_DOMAIN" \
     -v "$root/deploy/nginx/templates/gateway.conf.template:/etc/nginx/templates/default.conf.template:ro" \
     -v "$cert_root:/etc/letsencrypt:ro" \
