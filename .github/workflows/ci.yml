@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Verify formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          test -z "$unformatted" || { echo "$unformatted"; exit 1; }
+
+      - name: Download and verify dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Build services
+        run: |
+          go build ./cmd/gateway
+          go build ./cmd/user-service
+          go build ./cmd/order-service
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build gateway image
+        run: docker build --build-arg SERVICE=gateway .
