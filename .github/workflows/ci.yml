@@ -46,14 +46,10 @@ jobs:
 
       - name: Resolve dependencies
         run: |
-          go mod tidy
+          go mod download
           go mod verify
-          echo "GO_MOD_BEGIN"
-          cat go.mod
-          echo "GO_MOD_END"
-          echo "GO_SUM_BEGIN"
-          cat go.sum
-          echo "GO_SUM_END"
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
 
       - name: Vet
         run: go vet ./...
