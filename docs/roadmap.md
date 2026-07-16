@@ -20,10 +20,10 @@
 
 ## Phase 3 — Asynchronous usage logging
 
-- [ ] Bounded event queue between request handling and usage persistence
-- [ ] Worker with batching, retry, and dead-letter behavior
-- [ ] PostgreSQL usage aggregates
-- [ ] Backpressure and queue-depth metrics
+- [x] Bounded event queue between request handling and usage persistence
+- [x] Worker with batching, retry, and dead-letter behavior
+- [x] PostgreSQL usage records and hourly aggregates
+- [x] Backpressure, queue-depth, retry, batch, and dead-letter metrics
 
 ## Phase 4 — Deployment and monitoring
 

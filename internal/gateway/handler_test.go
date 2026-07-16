@@ -13,6 +13,7 @@ import (
 	"github.com/beasthphp/distributed-api-gateway/internal/config"
 	"github.com/beasthphp/distributed-api-gateway/internal/metrics"
 	"github.com/beasthphp/distributed-api-gateway/internal/ratelimit"
+	"github.com/beasthphp/distributed-api-gateway/internal/usage"
 )
 
 type fakeLimiter struct {
@@ -42,6 +43,15 @@ func (f fakeAuthenticator) Authenticate(_ context.Context, rawKey, _ string) (au
 type healthy struct{}
 
 func (healthy) Ping(context.Context) error { return nil }
+
+type fakeUsageRecorder struct {
+	events []usage.Event
+}
+
+func (r *fakeUsageRecorder) Enqueue(event usage.Event) bool {
+	r.events = append(r.events, event)
+	return true
+}
 
 func TestProtectedRouteRequiresAPIKey(t *testing.T) {
 	h := testHandler(t, "http://127.0.0.1:1", fakeLimiter{})
@@ -107,7 +117,38 @@ func TestReadinessIsPublic(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedRequestEmitsNormalizedUsageEvent(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("created"))
+	}))
+	defer upstream.Close()
+
+	usageRecorder := &fakeUsageRecorder{}
+	h := testHandlerWithUsage(t, upstream.URL, fakeLimiter{decision: ratelimit.Decision{Allowed: true}}, usageRecorder)
+	request := httptest.NewRequest(http.MethodGet, "/api/users/42?private=value", nil)
+	request.Header.Set("X-API-Key", "test-key")
+	request.Header.Set("X-Request-ID", "request-usage-test")
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, request)
+
+	if len(usageRecorder.events) != 1 {
+		t.Fatalf("usage events = %d, want 1", len(usageRecorder.events))
+	}
+	event := usageRecorder.events[0]
+	if event.Route != "/api/users" || event.RequestID != "request-usage-test" || event.StatusCode != http.StatusCreated {
+		t.Fatalf("usage event = %+v", event)
+	}
+	if event.ResponseBytes != int64(len("created")) || event.DurationMicros < 0 {
+		t.Fatalf("usage bytes/duration = %d/%d", event.ResponseBytes, event.DurationMicros)
+	}
+}
+
 func testHandler(t *testing.T, userURL string, limiter ratelimit.Limiter) http.Handler {
+	return testHandlerWithUsage(t, userURL, limiter, nil)
+}
+
+func testHandlerWithUsage(t *testing.T, userURL string, limiter ratelimit.Limiter, usageRecorder usage.Recorder) http.Handler {
 	t.Helper()
 	h, err := NewHandler(Dependencies{
 		Config: config.Config{
@@ -120,6 +161,7 @@ func testHandler(t *testing.T, userURL string, limiter ratelimit.Limiter) http.H
 		}},
 		Readiness: []HealthCheck{{Name: "test", Checker: healthy{}}},
 		Metrics:   metrics.NewRegistry(),
+		Usage:     usageRecorder,
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {

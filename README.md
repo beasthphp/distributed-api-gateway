@@ -1,8 +1,8 @@
 # Distributed API Gateway
 
-A production-style API gateway built in Go to demonstrate backend engineering, persistent API-key management, distributed rate limiting, reverse proxying, observability, and containerized service deployment.
+A production-style API gateway built in Go to demonstrate backend engineering, persistent API-key management, distributed rate limiting, asynchronous usage processing, reverse proxying, observability, and containerized service deployment.
 
-> Phase 2 adds durable identity and quota policy, but this remains a learning project rather than a claim of production readiness. The roadmap covers asynchronous usage logging, dashboards, deployment hardening, and benchmarking.
+> Phase 3 adds a bounded asynchronous usage pipeline, but this remains a learning project rather than a claim of production readiness. The roadmap covers dashboards, deployment hardening, and benchmarking.
 
 ## What is implemented
 
@@ -10,6 +10,9 @@ A production-style API gateway built in Go to demonstrate backend engineering, p
 - One-time API-key issuance with HMAC-SHA-256 database digests
 - Per-client and per-route quota policies
 - Atomic Redis token-bucket rate limiting using Redis server time
+- Non-blocking bounded usage-event queue with explicit backpressure
+- Batched PostgreSQL usage persistence with retry and dead-letter handling
+- Idempotent hourly usage aggregates
 - Reverse-proxy routing to user and order microservices
 - Request IDs propagated to upstream services
 - JSON structured gateway logs
@@ -29,6 +32,9 @@ flowchart TD
     A --> R[Redis token bucket]
     R --> U[User service]
     R --> O[Order service]
+    G -. non-blocking event .-> Q[Bounded usage queue]
+    Q --> W[Batch worker]
+    W --> P[PostgreSQL usage + aggregates]
     G --> M[Prometheus metrics]
 ```
 
@@ -70,6 +76,8 @@ docker compose down
 6. Accepted requests are routed to the relevant upstream service.
 7. The response includes rate-limit and request-tracing headers.
 8. Metrics and a structured completion log record the outcome.
+9. An authenticated request emits a non-blocking usage event into a bounded queue.
+10. A worker writes idempotent batches and hourly aggregates to PostgreSQL; exhausted retries go to dead-letter storage.
 
 When the quota is exhausted, the gateway returns HTTP `429` with `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers.
 
@@ -98,6 +106,12 @@ When the quota is exhausted, the gateway returns HTTP `429` with `Retry-After`, 
 | `DATABASE_URL` | local PostgreSQL URL | Client and key database |
 | `API_KEY_PEPPER` | development value | Secret used for HMAC key digests |
 | `RATE_LIMIT_FAIL_OPEN` | `false` | Allow traffic when Redis fails |
+| `USAGE_QUEUE_CAPACITY` | `1024` | Maximum events waiting in memory |
+| `USAGE_BATCH_SIZE` | `100` | Maximum events per PostgreSQL batch |
+| `USAGE_FLUSH_INTERVAL` | `1s` | Maximum wait for a partial batch |
+| `USAGE_MAX_ATTEMPTS` | `3` | Batch persistence attempts |
+| `USAGE_RETRY_BASE_DELAY` | `100ms` | Initial exponential retry delay |
+| `USAGE_SHUTDOWN_TIMEOUT` | `5s` | Graceful queue-drain deadline |
 
 Never use the development API key in a public deployment. Put production secrets in the VPS secret environment rather than the repository or Compose file.
 
@@ -130,6 +144,7 @@ internal/auth/          API-key generation and HMAC authentication
 internal/gateway/       routing and middleware pipeline
 internal/ratelimit/     atomic Redis token bucket
 internal/store/         PostgreSQL queries and embedded migrations
+internal/usage/         bounded queue, batch worker, retry and dead letters
 internal/metrics/       bounded-cardinality Prometheus metrics
 internal/mockservice/   demonstration upstream services
 deploy/prometheus/      scrape configuration
@@ -146,12 +161,15 @@ scripts/                smoke test
 - **Fail closed:** Redis failure returns `503` by default so quota enforcement is not silently bypassed.
 - **Hashed Redis keys:** raw API keys are never stored as Redis key names.
 - **Bounded metric labels:** response status is bounded; API keys and raw paths are never labels.
+- **Non-blocking usage admission:** a full queue drops and counts the event instead of slowing API responses or growing memory without limit.
+- **Idempotent persistence:** event UUID conflicts prevent retried batches from duplicating raw rows or hourly totals.
+- **Explicit terminal failure:** batches that exhaust retries are written to a dead-letter table; failure of that fallback is separately counted.
 - **Thin gateway:** mock business data lives in upstream services, not in routing middleware.
 
-See [docs/architecture.md](docs/architecture.md) for deeper trade-offs, [docs/api-key-operations.md](docs/api-key-operations.md) for key administration, and [docs/roadmap.md](docs/roadmap.md) for the next milestones.
+See [docs/architecture.md](docs/architecture.md) for deeper trade-offs, [docs/api-key-operations.md](docs/api-key-operations.md) for key administration, [docs/usage-logging.md](docs/usage-logging.md) for pipeline operations, and [docs/roadmap.md](docs/roadmap.md) for the next milestones.
 
 ## Resume-ready description after completion
 
-> Built a Go API gateway with PostgreSQL-backed API-key lifecycle management, per-route plans, an atomic Redis token bucket, reverse-proxy routing, health checks, Prometheus metrics, containerized microservices, integration tests, and CI.
+> Built a Go API gateway with PostgreSQL-backed API-key lifecycle management, per-route plans, an atomic Redis token bucket, bounded asynchronous usage logging with idempotent aggregates, reverse-proxy routing, Prometheus metrics, integration tests, and CI.
 
 Only add later roadmap features to the resume after they are implemented and verified.

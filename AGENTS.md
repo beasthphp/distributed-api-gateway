@@ -33,6 +33,8 @@ sh scripts/smoke-test.sh
 - Keep the gateway stateless; durable identity/policy belongs in PostgreSQL and shared enforcement state belongs in Redis.
 - Do not log secrets, full API keys, request bodies, or authentication headers.
 - Do not use API keys, request IDs, or raw resource paths as metric labels.
+- Keep usage emission non-blocking; overload must remain bounded and measurable.
+- Preserve usage-event idempotency so retries cannot double-count aggregates.
 - Preserve fail-closed rate limiting unless a change explicitly documents the availability trade-off.
 - Preserve one-time API-key display: store only HMAC digests and safe prefixes.
 - Add or update tests when behavior changes.

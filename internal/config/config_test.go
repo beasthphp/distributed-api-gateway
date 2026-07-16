@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("LISTEN_ADDR", "")
@@ -15,6 +18,29 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.DatabaseURL == "" {
 		t.Fatal("DatabaseURL is empty")
+	}
+	if cfg.UsageQueueCapacity != 1024 || cfg.UsageBatchSize != 100 {
+		t.Fatalf("usage queue defaults = %d/%d, want 1024/100", cfg.UsageQueueCapacity, cfg.UsageBatchSize)
+	}
+}
+
+func TestLoadRejectsInvalidUsageConfiguration(t *testing.T) {
+	t.Setenv("USAGE_QUEUE_CAPACITY", "10")
+	t.Setenv("USAGE_BATCH_SIZE", "20")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want invalid usage queue error")
+	}
+}
+
+func TestLoadReadsUsageDurations(t *testing.T) {
+	t.Setenv("USAGE_FLUSH_INTERVAL", "250ms")
+	t.Setenv("USAGE_RETRY_BASE_DELAY", "25ms")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.UsageFlushInterval != 250*time.Millisecond || cfg.UsageRetryBaseDelay != 25*time.Millisecond {
+		t.Fatalf("usage durations = %v/%v", cfg.UsageFlushInterval, cfg.UsageRetryBaseDelay)
 	}
 }
 
