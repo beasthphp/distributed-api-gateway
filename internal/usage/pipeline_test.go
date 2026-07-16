@@ -68,6 +68,13 @@ type fakeObserver struct {
 	persisted         int
 	deadLettered      int
 	deadLetterFailure int
+	capacity          int
+}
+
+func (o *fakeObserver) SetUsageQueueCapacity(value int) {
+	o.mu.Lock()
+	o.capacity = value
+	o.mu.Unlock()
 }
 
 func (o *fakeObserver) SetUsageQueueDepth(value int) {
@@ -124,6 +131,9 @@ func TestPipelineRetriesAndDrainsOnClose(t *testing.T) {
 	store.mu.Unlock()
 	if attempts != 3 || persisted != 2 {
 		t.Fatalf("attempts/persisted = %d/%d, want 3/2", attempts, persisted)
+	}
+	if observer.capacity != 4 {
+		t.Fatalf("queue capacity metric = %d, want 4", observer.capacity)
 	}
 	if observer.retries != 2 || observer.batches != 1 || observer.persisted != 2 {
 		t.Fatalf("observer retries/batches/events = %d/%d/%d, want 2/1/2", observer.retries, observer.batches, observer.persisted)

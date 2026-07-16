@@ -18,6 +18,7 @@ type Recorder interface {
 }
 
 type Observer interface {
+	SetUsageQueueCapacity(int)
 	SetUsageQueueDepth(int)
 	RecordUsageEnqueued()
 	RecordUsageDropped(int)
@@ -69,6 +70,7 @@ func NewPipeline(store Store, cfg Config, observer Observer, logger *slog.Logger
 		logger = slog.Default()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	observer.SetUsageQueueCapacity(cfg.QueueCapacity)
 	pipeline := &Pipeline{
 		store:    store,
 		cfg:      cfg,
@@ -242,6 +244,7 @@ func resetTimer(timer *time.Timer, duration time.Duration) {
 
 type noopObserver struct{}
 
+func (noopObserver) SetUsageQueueCapacity(int)        {}
 func (noopObserver) SetUsageQueueDepth(int)           {}
 func (noopObserver) RecordUsageEnqueued()             {}
 func (noopObserver) RecordUsageDropped(int)           {}

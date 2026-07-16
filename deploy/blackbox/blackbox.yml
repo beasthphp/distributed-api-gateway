@@ -1,0 +1,9 @@
+modules:
+  gateway_ready:
+    prober: http
+    timeout: 3s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      preferred_ip_protocol: ip4
+      follow_redirects: false

@@ -15,6 +15,7 @@ type Registry struct {
 	requests                atomic.Uint64
 	inFlight                atomic.Int64
 	durationNano            atomic.Uint64
+	usageQueueCapacity      atomic.Int64
 	usageQueueDepth         atomic.Int64
 	usageEnqueued           atomic.Uint64
 	usageDropped            atomic.Uint64
@@ -25,6 +26,10 @@ type Registry struct {
 	usageDeadLetterFailures atomic.Uint64
 	mu                      sync.RWMutex
 	responses               map[int]uint64
+}
+
+func (r *Registry) SetUsageQueueCapacity(capacity int) {
+	r.usageQueueCapacity.Store(int64(capacity))
 }
 
 func (r *Registry) SetUsageQueueDepth(depth int) {
@@ -109,6 +114,9 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	for _, code := range codes {
 		fmt.Fprintf(w, "gateway_http_responses_total{code=%q} %d\n", fmt.Sprint(code), responses[code])
 	}
+	fmt.Fprintln(w, "# HELP gateway_usage_queue_capacity Maximum number of usage events that can wait in memory.")
+	fmt.Fprintln(w, "# TYPE gateway_usage_queue_capacity gauge")
+	fmt.Fprintf(w, "gateway_usage_queue_capacity %d\n", r.usageQueueCapacity.Load())
 	fmt.Fprintln(w, "# HELP gateway_usage_queue_depth Usage events currently waiting in the bounded queue.")
 	fmt.Fprintln(w, "# TYPE gateway_usage_queue_depth gauge")
 	fmt.Fprintf(w, "gateway_usage_queue_depth %d\n", r.usageQueueDepth.Load())

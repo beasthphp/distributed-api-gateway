@@ -2,7 +2,7 @@
 
 A production-style API gateway built in Go to demonstrate backend engineering, persistent API-key management, distributed rate limiting, asynchronous usage processing, reverse proxying, observability, and containerized service deployment.
 
-> Phase 3 adds a bounded asynchronous usage pipeline, but this remains a learning project rather than a claim of production readiness. The roadmap covers dashboards, deployment hardening, and benchmarking.
+> Phase 4 adds a hardened VPS deployment and provisioned monitoring, but this remains a learning project rather than a claim of production readiness. The roadmap still covers measured performance evidence and portfolio finish.
 
 ## What is implemented
 
@@ -21,13 +21,18 @@ A production-style API gateway built in Go to demonstrate backend engineering, p
 - Fail-closed rate-limiter behavior by default
 - Graceful shutdown and bounded HTTP server timeouts
 - Docker Compose development environment
+- HTTPS-only production Compose stack with Nginx and Certbot
+- Private Redis, PostgreSQL, gateway, Prometheus, and exporter networking
+- Provisioned Grafana dashboard for traffic, errors, latency, quota denials, queues, dependencies, and host saturation
+- Prometheus alert rules, certificate renewal, database backups, deployment, rollback, and incident runbooks
 - Unit tests, race-detector CI, vet, formatting, and image build checks
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    C[Client] --> G[Go API Gateway]
+    C[Client] -->|HTTPS| N[Nginx]
+    N --> G[Go API Gateway]
     G --> A[PostgreSQL API-key lookup]
     A --> R[Redis token bucket]
     R --> U[User service]
@@ -36,6 +41,8 @@ flowchart TD
     Q --> W[Batch worker]
     W --> P[PostgreSQL usage + aggregates]
     G --> M[Prometheus metrics]
+    X[Redis/PostgreSQL/host exporters] --> M
+    M --> D[Grafana dashboard + alerts]
 ```
 
 The gateway exposes one entry point while authentication and quota policy stay centralized. PostgreSQL stores durable client configuration; Redis makes token decisions consistent across gateway replicas.
@@ -65,6 +72,19 @@ Stop the stack:
 ```bash
 docker compose down
 ```
+
+## Production deployment
+
+The production stack is intentionally separate from local development. Copy `.env.production.example` to a mode-600 `.env.production`, set real secrets and private upstream URLs, point DNS at the VPS, then run:
+
+```bash
+make prod-validate PROD_ENV=.env.production
+make prod-tls-init PROD_ENV=.env.production
+```
+
+Only Nginx publishes internet-facing ports. Grafana binds to `127.0.0.1:3000`, and all data/metrics services remain private. Production runs migrations but never the development bootstrap, so create a real plan, client, and one-time key with `gateway-admin` after deployment.
+
+Follow [docs/deployment.md](docs/deployment.md) for the complete VPS procedure and [docs/runbook.md](docs/runbook.md) for alerts, backups, restore, and rollback.
 
 ## Request flow
 
@@ -147,9 +167,12 @@ internal/store/         PostgreSQL queries and embedded migrations
 internal/usage/         bounded queue, batch worker, retry and dead letters
 internal/metrics/       bounded-cardinality Prometheus metrics
 internal/mockservice/   demonstration upstream services
-deploy/prometheus/      scrape configuration
-docs/                   design decisions and roadmap
-scripts/                smoke test
+deploy/nginx/           public TLS edge templates
+deploy/prometheus/      development and production scrape/alert configuration
+deploy/grafana/         provisioned datasource and production dashboard
+deploy/systemd/         certificate-renewal and backup timers
+docs/                   design, deployment, operations, and roadmap
+scripts/                smoke, deploy, TLS, backup, and validation automation
 ```
 
 ## Design decisions
@@ -165,11 +188,14 @@ scripts/                smoke test
 - **Idempotent persistence:** event UUID conflicts prevent retried batches from duplicating raw rows or hourly totals.
 - **Explicit terminal failure:** batches that exhaust retries are written to a dead-letter table; failure of that fallback is separately counted.
 - **Thin gateway:** mock business data lives in upstream services, not in routing middleware.
+- **One public edge:** only Nginx binds public ports; metrics, data stores, and administrative surfaces stay private.
+- **Provisioned observability:** dashboard, scrape targets, and alert rules are versioned and validated alongside the application.
+- **Reproducible operations:** scripts validate, deploy, renew, and back up; runbooks make verification and rollback explicit.
 
-See [docs/architecture.md](docs/architecture.md) for deeper trade-offs, [docs/api-key-operations.md](docs/api-key-operations.md) for key administration, [docs/usage-logging.md](docs/usage-logging.md) for pipeline operations, and [docs/roadmap.md](docs/roadmap.md) for the next milestones.
+See [docs/architecture.md](docs/architecture.md) for deeper trade-offs, [docs/api-key-operations.md](docs/api-key-operations.md) for key administration, [docs/usage-logging.md](docs/usage-logging.md) for pipeline operations, [docs/deployment.md](docs/deployment.md) for VPS operations, and [docs/roadmap.md](docs/roadmap.md) for the next milestones.
 
 ## Resume-ready description after completion
 
-> Built a Go API gateway with PostgreSQL-backed API-key lifecycle management, per-route plans, an atomic Redis token bucket, bounded asynchronous usage logging with idempotent aggregates, reverse-proxy routing, Prometheus metrics, integration tests, and CI.
+> Built and deployed a Go API gateway with PostgreSQL-backed API-key lifecycle management, per-route plans, an atomic Redis token bucket, bounded asynchronous usage logging, an Nginx/HTTPS edge, provisioned Prometheus/Grafana monitoring, alerting, tested operational runbooks, integration tests, and CI.
 
 Only add later roadmap features to the resume after they are implemented and verified.

@@ -27,11 +27,11 @@
 
 ## Phase 4 — Deployment and monitoring
 
-- [ ] Nginx reverse proxy and HTTPS certificate
-- [ ] VPS deployment with private service networking
-- [ ] Grafana dashboard for traffic, latency, errors, and rate-limit denials
-- [ ] Redis and host exporters
-- [ ] Alert rules and a failure runbook
+- [x] Nginx reverse proxy and HTTPS certificate
+- [x] VPS deployment with private service networking
+- [x] Grafana dashboard for traffic, latency, errors, and rate-limit denials
+- [x] Redis, PostgreSQL, blackbox, and host exporters
+- [x] Alert rules, automated backups, deployment/rollback guide, and failure runbook
 
 ## Phase 5 — Performance evidence
 

@@ -19,6 +19,7 @@ gofmt -w .
 go vet ./...
 go test -race ./...
 docker compose config
+sh scripts/validate-production.sh .env.production.example
 ```
 
 For request-path changes, also run:
@@ -39,3 +40,7 @@ sh scripts/smoke-test.sh
 - Preserve one-time API-key display: store only HMAC digests and safe prefixes.
 - Add or update tests when behavior changes.
 - Prefer one focused feature branch and a draft pull request for each roadmap milestone.
+- Keep Nginx as the only internet-facing production service; Grafana must remain loopback-only and data services must have no host ports.
+- Never run `gateway-admin bootstrap` in production or add development credentials to `.env.production.example`.
+- Pin production container images and validate Compose, Prometheus, Nginx, shell, and dashboard configuration in CI.
+- Never use `docker compose down -v` in production runbooks because it removes persistent volumes.

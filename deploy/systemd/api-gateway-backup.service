@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up Distributed API Gateway PostgreSQL data
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/distributed-api-gateway
+ExecStart=/opt/distributed-api-gateway/scripts/backup-production.sh /opt/distributed-api-gateway/.env.production

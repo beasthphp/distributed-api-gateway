@@ -1,0 +1,20 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${GATEWAY_DOMAIN};
+    server_tokens off;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+    }
+
+    location = /nginx-health {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 404;
+    }
+}

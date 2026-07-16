@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew Distributed API Gateway TLS certificate
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/distributed-api-gateway
+ExecStart=/opt/distributed-api-gateway/scripts/renew-tls.sh /opt/distributed-api-gateway/.env.production

@@ -8,6 +8,7 @@ import (
 
 func TestUsageMetricsAreExposed(t *testing.T) {
 	registry := NewRegistry()
+	registry.SetUsageQueueCapacity(10)
 	registry.SetUsageQueueDepth(3)
 	registry.RecordUsageEnqueued()
 	registry.RecordUsageDropped(2)
@@ -20,6 +21,7 @@ func TestUsageMetricsAreExposed(t *testing.T) {
 	registry.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
 	body := recorder.Body.String()
 	for _, expected := range []string{
+		"gateway_usage_queue_capacity 10",
 		"gateway_usage_queue_depth 3",
 		"gateway_usage_events_enqueued_total 1",
 		"gateway_usage_events_dropped_total 2",
