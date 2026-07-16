@@ -13,11 +13,11 @@ import (
 const SchemaVersion = 1
 
 type Sample struct {
-	LatencyMicros        int64  `json:"latency_us"`
-	StatusCode           int    `json:"status_code"`
-	TransportError       bool   `json:"transport_error"`
+	LatencyMicros         int64  `json:"latency_us"`
+	StatusCode            int    `json:"status_code"`
+	TransportError        bool   `json:"transport_error"`
 	RateLimitHeadersValid bool   `json:"rate_limit_headers_valid"`
-	Upstream             string `json:"upstream,omitempty"`
+	Upstream              string `json:"upstream,omitempty"`
 }
 
 type LatencySummary struct {

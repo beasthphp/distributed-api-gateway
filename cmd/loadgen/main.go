@@ -106,11 +106,11 @@ func parseOptions(arguments []string) (options, error) {
 
 func run(opts options, apiKey string) (benchmark.Result, bool, error) {
 	transport := &http.Transport{
-		DisableCompression:   true,
-		MaxIdleConns:         opts.concurrency * 2,
-		MaxIdleConnsPerHost:  opts.concurrency,
-		MaxConnsPerHost:      opts.concurrency,
-		IdleConnTimeout:      30 * time.Second,
+		DisableCompression:    true,
+		MaxIdleConns:          opts.concurrency * 2,
+		MaxIdleConnsPerHost:   opts.concurrency,
+		MaxConnsPerHost:       opts.concurrency,
+		IdleConnTimeout:       30 * time.Second,
 		ResponseHeaderTimeout: opts.timeout,
 	}
 	defer transport.CloseIdleConnections()
@@ -193,7 +193,7 @@ func request(client *http.Client, opts options, apiKey string) (benchmark.Sample
 
 func verify(result *benchmark.Result, opts options, duration time.Duration) bool {
 	checks := map[string]bool{
-		"no_transport_errors": result.TransportErrors == 0,
+		"no_transport_errors":  result.TransportErrors == 0,
 		"status_codes_allowed": true,
 	}
 	for rawStatus := range result.StatusCounts {
