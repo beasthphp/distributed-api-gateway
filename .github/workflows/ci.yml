@@ -26,13 +26,10 @@ jobs:
           unformatted="$(gofmt -l .)"
           test -z "$unformatted" || { echo "$unformatted"; exit 1; }
 
-      - name: Resolve dependencies
+      - name: Download and verify dependencies
         run: |
-          go mod tidy
+          go mod download
           go mod verify
-          echo "GO_MOD_BEGIN"
-          cat go.mod
-          echo "GO_MOD_END"
 
       - name: Vet
         run: go vet ./...
