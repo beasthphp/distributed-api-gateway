@@ -4,7 +4,7 @@
 
 - [x] Go reverse proxy
 - [x] API-key authentication
-- [x] Atomic Redis fixed-window rate limiting
+- [x] Initial atomic Redis limiter (replaced by the Phase 2 token bucket)
 - [x] User and order mock services
 - [x] Request IDs and structured logs
 - [x] Liveness, readiness, and Prometheus metrics
@@ -12,11 +12,11 @@
 
 ## Phase 2 — Policies and persistence
 
-- [ ] PostgreSQL schema for clients, hashed API keys, plans, and revocation
-- [ ] Admin CLI or endpoint for issuing and revoking keys
-- [ ] Per-client and per-route quotas
-- [ ] Token-bucket Redis Lua implementation
-- [ ] Integration and concurrency tests against real Redis
+- [x] PostgreSQL schema for clients, hashed API keys, plans, and revocation
+- [x] Admin CLI for issuing and revoking keys
+- [x] Per-client and per-route quotas
+- [x] Token-bucket Redis Lua implementation
+- [x] PostgreSQL lifecycle and real-Redis concurrency tests
 
 ## Phase 3 — Asynchronous usage logging
 

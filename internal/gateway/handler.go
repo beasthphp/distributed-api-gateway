@@ -2,9 +2,8 @@ package gateway
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beasthphp/distributed-api-gateway/internal/auth"
 	"github.com/beasthphp/distributed-api-gateway/internal/config"
 	"github.com/beasthphp/distributed-api-gateway/internal/metrics"
 	"github.com/beasthphp/distributed-api-gateway/internal/ratelimit"
@@ -23,16 +23,22 @@ import (
 type contextKey string
 
 const (
-	apiKeyContextKey    contextKey = "api-key"
+	principalContextKey contextKey = "principal"
 	requestIDContextKey contextKey = "request-id"
 )
+
+type HealthCheck struct {
+	Name    string
+	Checker ratelimit.HealthChecker
+}
 
 // Dependencies makes infrastructure replaceable in unit tests and keeps the
 // HTTP layer independent from a concrete Redis implementation.
 type Dependencies struct {
 	Config    config.Config
 	Limiter   ratelimit.Limiter
-	Readiness ratelimit.HealthChecker
+	Auth      auth.Authenticator
+	Readiness []HealthCheck
 	Metrics   *metrics.Registry
 	Logger    *slog.Logger
 }
@@ -40,7 +46,8 @@ type Dependencies struct {
 type handler struct {
 	cfg        config.Config
 	limiter    ratelimit.Limiter
-	readiness  ratelimit.HealthChecker
+	auth       auth.Authenticator
+	readiness  []HealthCheck
 	metrics    *metrics.Registry
 	logger     *slog.Logger
 	userProxy  *httputil.ReverseProxy
@@ -76,6 +83,7 @@ func NewHandler(deps Dependencies) (http.Handler, error) {
 	h := &handler{
 		cfg:        deps.Config,
 		limiter:    deps.Limiter,
+		auth:       deps.Auth,
 		readiness:  deps.Readiness,
 		metrics:    deps.Metrics,
 		logger:     deps.Logger,
@@ -142,15 +150,21 @@ func (h *handler) live(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *handler) ready(w http.ResponseWriter, r *http.Request) {
-	if h.readiness == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "error": "Redis is not configured"})
+	if len(h.readiness) == 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "error": "dependencies are not configured"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
-	defer cancel()
-	if err := h.readiness.Ping(ctx); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "error": "Redis is unavailable"})
-		return
+	for _, check := range h.readiness {
+		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+		err := check.Checker.Ping(ctx)
+		cancel()
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"status": "not ready",
+				"error":  check.Name + " is unavailable",
+			})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
@@ -158,18 +172,22 @@ func (h *handler) ready(w http.ResponseWriter, r *http.Request) {
 func (h *handler) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		candidate := r.Header.Get("X-API-Key")
-		candidateHash := sha256.Sum256([]byte(candidate))
-		valid := 0
-		for _, allowed := range h.cfg.APIKeys {
-			allowedHash := sha256.Sum256([]byte(allowed))
-			valid |= subtle.ConstantTimeCompare(candidateHash[:], allowedHash[:])
+		if h.auth == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication service unavailable"})
+			return
 		}
-		if candidate == "" || valid != 1 {
+		principal, err := h.auth.Authenticate(r.Context(), candidate, routeKey(r.URL.Path))
+		if errors.Is(err, auth.ErrInvalidKey) {
 			w.Header().Set("WWW-Authenticate", "ApiKey")
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid API key"})
 			return
 		}
-		ctx := context.WithValue(r.Context(), apiKeyContextKey, candidate)
+		if err != nil {
+			h.logger.Error("API key lookup failed", "request_id", requestIDFromContext(r.Context()), "error", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication service unavailable"})
+			return
+		}
+		ctx := context.WithValue(r.Context(), principalContextKey, principal)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -181,8 +199,17 @@ func (h *handler) rateLimit(next http.Handler) http.Handler {
 			return
 		}
 
-		apiKey, _ := r.Context().Value(apiKeyContextKey).(string)
-		decision, err := h.limiter.Allow(r.Context(), apiKey)
+		principal, ok := r.Context().Value(principalContextKey).(auth.Principal)
+		if !ok {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authenticated principal missing"})
+			return
+		}
+		decision, err := h.limiter.Allow(r.Context(), ratelimit.Request{
+			Identity:      principal.KeyID,
+			Route:         routeKey(r.URL.Path),
+			RatePerSecond: principal.RatePerSecond,
+			BurstCapacity: principal.BurstCapacity,
+		})
 		if err != nil {
 			h.logger.Error("rate limiter failed", "request_id", requestIDFromContext(r.Context()), "error", err)
 			if h.cfg.RateLimitFailOpen {
@@ -196,8 +223,9 @@ func (h *handler) rateLimit(next http.Handler) http.Handler {
 		w.Header().Set("X-RateLimit-Limit", strconv.FormatInt(decision.Limit, 10))
 		w.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(decision.Remaining, 10))
 		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(decision.ResetAt.Unix(), 10))
+		w.Header().Set("X-RateLimit-Policy", fmt.Sprintf("%d;r=%.0f", principal.BurstCapacity, float64(principal.RatePerSecond)))
 		if !decision.Allowed {
-			retryAfter := time.Until(decision.ResetAt)
+			retryAfter := decision.RetryAfter
 			seconds := int64((retryAfter + time.Second - 1) / time.Second)
 			if seconds < 1 {
 				seconds = 1
@@ -298,6 +326,17 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter {
 func requestIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDContextKey).(string)
 	return id
+}
+
+func routeKey(path string) string {
+	switch {
+	case path == "/api/users" || strings.HasPrefix(path, "/api/users/"):
+		return "/api/users"
+	case path == "/api/orders" || strings.HasPrefix(path, "/api/orders/"):
+		return "/api/orders"
+	default:
+		return "/api/unknown"
+	}
 }
 
 func newRequestID() string {

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beasthphp/distributed-api-gateway/internal/auth"
 	"github.com/beasthphp/distributed-api-gateway/internal/config"
 	"github.com/beasthphp/distributed-api-gateway/internal/metrics"
 	"github.com/beasthphp/distributed-api-gateway/internal/ratelimit"
@@ -19,8 +20,23 @@ type fakeLimiter struct {
 	err      error
 }
 
-func (f fakeLimiter) Allow(context.Context, string) (ratelimit.Decision, error) {
+func (f fakeLimiter) Allow(context.Context, ratelimit.Request) (ratelimit.Decision, error) {
 	return f.decision, f.err
+}
+
+type fakeAuthenticator struct {
+	principal auth.Principal
+	err       error
+}
+
+func (f fakeAuthenticator) Authenticate(_ context.Context, rawKey, _ string) (auth.Principal, error) {
+	if rawKey == "" {
+		return auth.Principal{}, auth.ErrInvalidKey
+	}
+	if f.err != nil {
+		return auth.Principal{}, f.err
+	}
+	return f.principal, nil
 }
 
 type healthy struct{}
@@ -95,12 +111,14 @@ func testHandler(t *testing.T, userURL string, limiter ratelimit.Limiter) http.H
 	t.Helper()
 	h, err := NewHandler(Dependencies{
 		Config: config.Config{
-			APIKeys:         []string{"test-key"},
 			UserServiceURL:  userURL,
 			OrderServiceURL: userURL,
 		},
-		Limiter:   limiter,
-		Readiness: healthy{},
+		Limiter: limiter,
+		Auth: fakeAuthenticator{principal: auth.Principal{
+			KeyID: "key-1", ClientID: "client-1", Plan: "test", RatePerSecond: 10, BurstCapacity: 10,
+		}},
+		Readiness: []HealthCheck{{Name: "test", Checker: healthy{}}},
 		Metrics:   metrics.NewRegistry(),
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

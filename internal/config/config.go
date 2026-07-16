@@ -17,9 +17,8 @@ type Config struct {
 	RedisAddr         string
 	RedisPassword     string
 	RedisDB           int
-	APIKeys           []string
-	RateLimit         int64
-	RateWindow        time.Duration
+	DatabaseURL       string
+	APIKeyPepper      string
 	RateLimitPrefix   string
 	RateLimitFailOpen bool
 	ShutdownTimeout   time.Duration
@@ -34,6 +33,8 @@ func Load() (Config, error) {
 		OrderServiceURL:   env("ORDER_SERVICE_URL", "http://localhost:8082"),
 		RedisAddr:         env("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:     os.Getenv("REDIS_PASSWORD"),
+		DatabaseURL:       env("DATABASE_URL", "postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable"),
+		APIKeyPepper:      env("API_KEY_PEPPER", "dev-only-pepper-change-me"),
 		RateLimitPrefix:   env("RATE_LIMIT_PREFIX", "gateway:ratelimit"),
 		RateLimitFailOpen: envBool("RATE_LIMIT_FAIL_OPEN", false),
 		ShutdownTimeout:   10 * time.Second,
@@ -44,24 +45,8 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	limit, err := envInt("RATE_LIMIT_REQUESTS", 100)
-	if err != nil {
-		return Config{}, err
-	}
-	if limit <= 0 {
-		return Config{}, fmt.Errorf("RATE_LIMIT_REQUESTS must be positive")
-	}
-	cfg.RateLimit = int64(limit)
-
-	window, err := time.ParseDuration(env("RATE_LIMIT_WINDOW", "1m"))
-	if err != nil || window < time.Millisecond {
-		return Config{}, fmt.Errorf("RATE_LIMIT_WINDOW must be at least 1ms")
-	}
-	cfg.RateWindow = window
-
-	cfg.APIKeys = splitNonEmpty(env("API_KEYS", "dev-key-change-me"))
-	if len(cfg.APIKeys) == 0 {
-		return Config{}, fmt.Errorf("API_KEYS must contain at least one key")
+	if len(cfg.APIKeyPepper) < 16 {
+		return Config{}, fmt.Errorf("API_KEY_PEPPER must contain at least 16 characters")
 	}
 
 	return cfg, nil
@@ -96,15 +81,4 @@ func envBool(name string, fallback bool) bool {
 		return fallback
 	}
 	return value
-}
-
-func splitNonEmpty(raw string) []string {
-	parts := strings.Split(raw, ",")
-	values := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if value := strings.TrimSpace(part); value != "" {
-			values = append(values, value)
-		}
-	}
-	return values
 }

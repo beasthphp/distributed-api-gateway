@@ -9,88 +9,121 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Decision is the result of one distributed rate-limit check.
+const microToken = int64(1_000_000)
+
+type Request struct {
+	Identity      string
+	Route         string
+	RatePerSecond int64
+	BurstCapacity int64
+}
+
 type Decision struct {
-	Allowed   bool
-	Limit     int64
-	Remaining int64
-	ResetAt   time.Time
+	Allowed    bool
+	Limit      int64
+	Remaining  int64
+	ResetAt    time.Time
+	RetryAfter time.Duration
 }
 
-// Limiter is implemented by RedisLimiter and by lightweight test doubles.
 type Limiter interface {
-	Allow(context.Context, string) (Decision, error)
+	Allow(context.Context, Request) (Decision, error)
 }
 
-// HealthChecker lets the readiness endpoint verify Redis independently of a
-// request's rate-limit decision.
 type HealthChecker interface {
 	Ping(context.Context) error
 }
 
-// RedisLimiter uses one Lua script so INCR, first-expiry assignment, and TTL
-// lookup execute atomically on Redis, even when multiple gateway instances run.
+// RedisLimiter implements a distributed token bucket. Redis TIME provides the
+// clock so gateway hosts cannot disagree because of local clock skew.
 type RedisLimiter struct {
 	client *redis.Client
-	limit  int64
-	window time.Duration
 	prefix string
 	now    func() time.Time
 }
 
-var fixedWindowScript = redis.NewScript(`
-local current = redis.call("INCR", KEYS[1])
-if current == 1 then
-  redis.call("PEXPIRE", KEYS[1], ARGV[1])
+var tokenBucketScript = redis.NewScript(`
+local now_parts = redis.call("TIME")
+local now_ms = (now_parts[1] * 1000) + math.floor(now_parts[2] / 1000)
+local capacity = tonumber(ARGV[1])
+local refill_per_ms = tonumber(ARGV[2])
+local cost = tonumber(ARGV[3])
+local ttl_ms = tonumber(ARGV[4])
+
+local bucket = redis.call("HMGET", KEYS[1], "tokens", "updated_at_ms")
+local tokens = tonumber(bucket[1])
+local updated_at_ms = tonumber(bucket[2])
+
+if tokens == nil or updated_at_ms == nil then
+  tokens = capacity
+  updated_at_ms = now_ms
+else
+  local elapsed = math.max(0, now_ms - updated_at_ms)
+  tokens = math.min(capacity, tokens + (elapsed * refill_per_ms))
+  updated_at_ms = now_ms
 end
-local ttl = redis.call("PTTL", KEYS[1])
-return {current, ttl}
+
+local allowed = 0
+if tokens >= cost then
+  allowed = 1
+  tokens = tokens - cost
+end
+
+local retry_ms = 0
+if allowed == 0 then
+  retry_ms = math.ceil((cost - tokens) / refill_per_ms)
+end
+local full_ms = math.ceil((capacity - tokens) / refill_per_ms)
+
+redis.call("HSET", KEYS[1], "tokens", math.floor(tokens), "updated_at_ms", updated_at_ms)
+redis.call("PEXPIRE", KEYS[1], ttl_ms)
+return {allowed, math.floor(tokens), retry_ms, full_ms}
 `)
 
-func NewRedisLimiter(client *redis.Client, limit int64, window time.Duration, prefix string) *RedisLimiter {
-	return &RedisLimiter{
-		client: client,
-		limit:  limit,
-		window: window,
-		prefix: prefix,
-		now:    time.Now,
-	}
+func NewRedisLimiter(client *redis.Client, prefix string) *RedisLimiter {
+	return &RedisLimiter{client: client, prefix: prefix, now: time.Now}
 }
 
-func (l *RedisLimiter) Allow(ctx context.Context, identity string) (Decision, error) {
+func (l *RedisLimiter) Allow(ctx context.Context, request Request) (Decision, error) {
 	if l.client == nil {
 		return Decision{}, fmt.Errorf("redis client is nil")
 	}
+	if request.Identity == "" || request.Route == "" {
+		return Decision{}, fmt.Errorf("rate-limit identity and route are required")
+	}
+	if request.RatePerSecond <= 0 || request.BurstCapacity <= 0 {
+		return Decision{}, fmt.Errorf("rate-limit policy must be positive")
+	}
 
-	digest := sha256.Sum256([]byte(identity))
-	key := fmt.Sprintf("%s:%x", l.prefix, digest[:12])
-	result, err := fixedWindowScript.Run(
+	digest := sha256.Sum256([]byte(request.Identity + "\x00" + request.Route))
+	key := fmt.Sprintf("%s:%x", l.prefix, digest[:16])
+	capacity := request.BurstCapacity * microToken
+	refillPerMillisecond := request.RatePerSecond * (microToken / 1000)
+	ttlMilliseconds := ((request.BurstCapacity*1000)/request.RatePerSecond)*2 + 1000
+
+	result, err := tokenBucketScript.Run(
 		ctx,
 		l.client,
 		[]string{key},
-		l.window.Milliseconds(),
+		capacity,
+		refillPerMillisecond,
+		microToken,
+		ttlMilliseconds,
 	).Int64Slice()
 	if err != nil {
-		return Decision{}, fmt.Errorf("execute rate-limit script: %w", err)
+		return Decision{}, fmt.Errorf("execute token-bucket script: %w", err)
 	}
-	if len(result) != 2 {
-		return Decision{}, fmt.Errorf("unexpected rate-limit result length: %d", len(result))
-	}
-
-	used, ttlMillis := result[0], result[1]
-	if ttlMillis < 0 {
-		ttlMillis = l.window.Milliseconds()
-	}
-	remaining := l.limit - used
-	if remaining < 0 {
-		remaining = 0
+	if len(result) != 4 {
+		return Decision{}, fmt.Errorf("unexpected token-bucket result length: %d", len(result))
 	}
 
+	retryAfter := time.Duration(result[2]) * time.Millisecond
 	return Decision{
-		Allowed:   used <= l.limit,
-		Limit:     l.limit,
-		Remaining: remaining,
-		ResetAt:   l.now().Add(time.Duration(ttlMillis) * time.Millisecond),
+		Allowed:    result[0] == 1,
+		Limit:      request.BurstCapacity,
+		Remaining:  result[1] / microToken,
+		ResetAt:    l.now().Add(time.Duration(result[3]) * time.Millisecond),
+		RetryAfter: retryAfter,
 	}, nil
 }
 
