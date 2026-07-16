@@ -8,12 +8,15 @@ Phase 1 establishes a small but defensible request path:
 sequenceDiagram
     participant C as Client
     participant G as Gateway
+    participant P as PostgreSQL
     participant R as Redis
     participant S as Service
     C->>G: Request + X-API-Key
-    G->>G: Authenticate key
-    G->>R: Atomic INCR + expiry Lua script
-    R-->>G: Usage and TTL
+    G->>G: HMAC supplied key
+    G->>P: Active digest + route lookup
+    P-->>G: Client, plan, effective quota
+    G->>R: Atomic token-bucket Lua script
+    R-->>G: Decision, tokens, retry time
     alt quota available
         G->>S: Proxied request + request ID
         S-->>G: Service response
@@ -38,17 +41,23 @@ Middleware responsibilities are separated:
 5. Distributed rate limiting
 6. Route selection and reverse proxying
 
+### PostgreSQL authentication and policy
+
+Plans define a default requests-per-second refill rate and burst capacity. Clients belong to a plan and may have longest-prefix route overrides. API keys contain only a display prefix and a 32-byte HMAC-SHA-256 digest; the raw value is returned once by the admin CLI and cannot be reconstructed from the database.
+
+Revocation sets `revoked_at`. Authentication joins the active key, client, plan, and best matching route override in one query, so revocation takes effect on the next request without an in-memory cache window.
+
 ### Redis limiter
 
-The fixed-window algorithm performs the following operations in one Lua script:
+The token-bucket algorithm performs the following operations in one Lua script:
 
-1. Increment the counter.
-2. Set expiration only for the first request in a window.
-3. Read the remaining TTL.
+1. Read Redis server time.
+2. Refill integer microtokens up to the configured burst capacity.
+3. Consume one request token when available.
+4. Persist the remaining tokens and timestamp with a bounded TTL.
+5. Return remaining capacity and an exact retry delay.
 
-Lua execution is atomic in Redis, preventing races between multiple gateway processes. The Redis key uses a truncated SHA-256 digest of the API key so raw credentials do not appear in key listings.
-
-Fixed windows can allow bursts at a window boundary. A token bucket is the planned Phase 2 policy because it permits controlled bursts while smoothing sustained traffic.
+Lua execution is atomic in Redis, preventing races between gateway processes. Buckets are isolated by API-key ID and normalized route. Integer microtokens avoid floating-point drift, and Redis server time avoids inconsistent decisions from host clock skew.
 
 ### Reverse proxy
 
@@ -58,7 +67,7 @@ Routes are selected by stable path prefixes. The gateway preserves the request p
 
 The gateway exposes Prometheus text-format counters and a gauge. Labels are intentionally bounded to status codes. API keys, request IDs, and unnormalized resource paths would create unbounded cardinality and are therefore excluded.
 
-Liveness only confirms that the process can serve HTTP. Readiness pings Redis because the default fail-closed policy requires Redis before the gateway should receive protected traffic.
+Liveness only confirms that the process can serve HTTP. Readiness pings Redis and PostgreSQL because the gateway requires both dependencies before it should receive protected traffic.
 
 ## Failure behavior
 
@@ -66,6 +75,7 @@ Liveness only confirms that the process can serve HTTP. Readiness pings Redis be
 |---|---|---|
 | Missing/invalid API key | `401` | Caller is unauthenticated |
 | Quota exhausted | `429` | Caller should retry after reset |
+| PostgreSQL unavailable | `503` | Authentication policy cannot be loaded |
 | Redis unavailable | `503` | Enforcement dependency unavailable |
 | Upstream unavailable | `502` | Gateway could not obtain an upstream response |
 | Unknown API path | `404` | No route is configured |
@@ -76,11 +86,11 @@ Liveness only confirms that the process can serve HTTP. Readiness pings Redis be
 
 - HTTPS terminates at Nginx in the deployment milestone.
 - Development keys must be replaced before internet exposure.
-- API keys should eventually be stored as salted hashes with metadata and revocation state in PostgreSQL.
+- API keys are generated with 256 bits of entropy and stored only as peppered HMAC digests with metadata and revocation state.
 - `/metrics` should be network-restricted rather than publicly exposed.
 - Redis and upstream services should only be reachable on private networks.
 - Request bodies and API keys are not written to logs.
 
 ## Scaling path
 
-The next deployment topology places Nginx and two or more gateway replicas on the VPS, sharing Redis. Laptop-hosted upstream services connect through Tailscale during the demonstration phase. Production services would normally run in the same private infrastructure rather than on a personal laptop.
+The next deployment topology places Nginx and two or more gateway replicas on the VPS, sharing Redis and PostgreSQL. Laptop-hosted upstream services connect through Tailscale during the demonstration phase. Production services would normally run in the same private infrastructure rather than on a personal laptop.

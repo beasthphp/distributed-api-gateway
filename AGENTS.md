@@ -30,9 +30,10 @@ sh scripts/smoke-test.sh
 
 ## Engineering rules
 
-- Keep the gateway stateless; shared enforcement state belongs in Redis or PostgreSQL.
+- Keep the gateway stateless; durable identity/policy belongs in PostgreSQL and shared enforcement state belongs in Redis.
 - Do not log secrets, full API keys, request bodies, or authentication headers.
 - Do not use API keys, request IDs, or raw resource paths as metric labels.
 - Preserve fail-closed rate limiting unless a change explicitly documents the availability trade-off.
+- Preserve one-time API-key display: store only HMAC digests and safe prefixes.
 - Add or update tests when behavior changes.
 - Prefer one focused feature branch and a draft pull request for each roadmap milestone.

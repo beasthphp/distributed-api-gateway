@@ -13,6 +13,21 @@ services:
       retries: 10
     restart: unless-stopped
 
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
+      POSTGRES_DB: gateway
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   user-service:
     build:
       context: .
@@ -41,6 +56,21 @@ services:
       retries: 5
     restart: unless-stopped
 
+  gateway-admin:
+    build:
+      context: .
+      args:
+        SERVICE: gateway-admin
+    command: ["bootstrap"]
+    environment:
+      DATABASE_URL: "postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable"
+      API_KEY_PEPPER: "${API_KEY_PEPPER:-dev-only-pepper-change-me}"
+      DEV_API_KEY: "${DEV_API_KEY:-dev-key-change-me}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   gateway:
     build:
       context: .
@@ -51,15 +81,16 @@ services:
       USER_SERVICE_URL: "http://user-service:8081"
       ORDER_SERVICE_URL: "http://order-service:8082"
       REDIS_ADDR: "redis:6379"
-      API_KEYS: "${API_KEYS:-dev-key-change-me}"
-      RATE_LIMIT_REQUESTS: "${RATE_LIMIT_REQUESTS:-20}"
-      RATE_LIMIT_WINDOW: "${RATE_LIMIT_WINDOW:-1m}"
+      DATABASE_URL: "postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable"
+      API_KEY_PEPPER: "${API_KEY_PEPPER:-dev-only-pepper-change-me}"
       RATE_LIMIT_FAIL_OPEN: "false"
     ports:
       - "8080:8080"
     depends_on:
       redis:
         condition: service_healthy
+      gateway-admin:
+        condition: service_completed_successfully
       user-service:
         condition: service_healthy
       order-service:
@@ -87,4 +118,5 @@ services:
 
 volumes:
   redis-data:
+  postgres-data:
   prometheus-data:

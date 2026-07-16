@@ -1,8 +1,11 @@
 module github.com/beasthphp/distributed-api-gateway
 
-go 1.24
+go 1.25
 
-require github.com/redis/go-redis/v9 v9.21.0
+require (
+	github.com/jackc/pgx/v5 v5.10.0
+	github.com/redis/go-redis/v9 v9.21.0
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

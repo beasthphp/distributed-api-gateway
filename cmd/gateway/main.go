@@ -10,10 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/beasthphp/distributed-api-gateway/internal/auth"
 	"github.com/beasthphp/distributed-api-gateway/internal/config"
 	"github.com/beasthphp/distributed-api-gateway/internal/gateway"
 	"github.com/beasthphp/distributed-api-gateway/internal/metrics"
 	"github.com/beasthphp/distributed-api-gateway/internal/ratelimit"
+	"github.com/beasthphp/distributed-api-gateway/internal/store"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -22,6 +24,23 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+	if cfg.APIKeyPepper == "dev-only-pepper-change-me" {
+		logger.Warn("using development API key pepper; replace it before deployment")
+	}
+
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer startupCancel()
+	postgresStore, err := store.Open(startupCtx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("connect to PostgreSQL", "error", err)
+		os.Exit(1)
+	}
+	defer postgresStore.Close()
+	authenticator, err := auth.NewService(postgresStore, cfg.APIKeyPepper)
+	if err != nil {
+		logger.Error("build authentication service", "error", err)
 		os.Exit(1)
 	}
 
@@ -36,13 +55,17 @@ func main() {
 		}
 	}()
 
-	limiter := ratelimit.NewRedisLimiter(redisClient, cfg.RateLimit, cfg.RateWindow, cfg.RateLimitPrefix)
+	limiter := ratelimit.NewRedisLimiter(redisClient, cfg.RateLimitPrefix)
 	handler, err := gateway.NewHandler(gateway.Dependencies{
-		Config:    cfg,
-		Limiter:   limiter,
-		Readiness: limiter,
-		Metrics:   metrics.NewRegistry(),
-		Logger:    logger,
+		Config:  cfg,
+		Limiter: limiter,
+		Auth:    authenticator,
+		Readiness: []gateway.HealthCheck{
+			{Name: "Redis", Checker: limiter},
+			{Name: "PostgreSQL", Checker: postgresStore},
+		},
+		Metrics: metrics.NewRegistry(),
+		Logger:  logger,
 	})
 	if err != nil {
 		logger.Error("build gateway handler", "error", err)

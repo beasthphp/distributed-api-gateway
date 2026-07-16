@@ -1,4 +1,4 @@
-.PHONY: test vet run up down logs smoke
+.PHONY: test vet run migrate bootstrap up down logs smoke
 
 test:
 	go test -race ./...
@@ -8,6 +8,12 @@ vet:
 
 run:
 	go run ./cmd/gateway
+
+migrate:
+	go run ./cmd/gateway-admin migrate
+
+bootstrap:
+	go run ./cmd/gateway-admin bootstrap
 
 up:
 	docker compose up --build -d
