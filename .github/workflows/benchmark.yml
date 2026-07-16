@@ -32,6 +32,11 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Install C++ benchmark dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcurl4-openssl-dev
+
       - name: Run repeatable benchmark matrix
         run: sh scripts/run-benchmarks.sh results/github-actions
 
