@@ -1,0 +1,6 @@
+scenario,tool,gateway_instances,requests,concurrency,duration_ms,throughput_rps,p50_ms,p95_ms,p99_ms,error_rate_percent,rate_limited,observed_upstreams,verification_passed
+multi-cpp,cpp-libcurl,3,2000,32,962.959848,2076.929795,13.913000,30.807000,43.026000,0.000000,0,3,true
+multi-go,go-loadgen,3,2000,32,1094.186000,1827.842257,13.149000,32.788000,73.247000,0.000000,0,3,true
+rate-limit-multi,go-loadgen,3,100,100,40.483000,2470.113174,27.810000,37.158000,38.093000,96.000000,96,3,true
+single-cpp,cpp-libcurl,1,2000,32,873.056134,2290.803446,12.855000,25.416000,34.796000,0.000000,0,1,true
+single-go,go-loadgen,1,2000,32,1006.186000,1987.703849,13.922000,30.907000,46.029000,0.000000,0,1,true

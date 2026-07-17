@@ -81,6 +81,14 @@ Pushes to the Phase 5 branch run `.github/workflows/benchmark.yml`. The workflow
 
 The workflow is also manually runnable after merge. Results from separate workflow runs must be reported separately unless the environment and workload are demonstrably controlled.
 
+## Committed Phase 5 baseline
+
+The reviewed baseline is stored at [`results/baseline-github-actions-29522346155`](../results/baseline-github-actions-29522346155/) and came from [GitHub Actions run 29522346155](https://github.com/beasthphp/distributed-api-gateway/actions/runs/29522346155). The artifact records a four-vCPU AMD EPYC runner, Docker 28.0.4, Compose 2.38.2, the tested merge commit, and the run ID.
+
+The committed per-request JSON files use deterministic gzip compression to fit the repository connector. `gzip -cd file.json.gz` reproduces the exact artifact JSON bytes; the workflow artifact itself remains available from the linked run.
+
+All five verification objects are `passed=true`. The Go scenarios measured 1,987.70 req/s at p95 30.91 ms for one gateway and 1,827.84 req/s at p95 32.79 ms for three, both with 0% errors. The C++ cross-check measured 2,290.80 req/s at p95 25.42 ms and 2,076.93 req/s at p95 30.81 ms respectively. The three-replica quota test accepted 4 requests and denied 96, below its computed upper bound of 5, with the required headers and all three upstreams observed.
+
 ## Interpretation limits
 
 - GitHub-hosted runner hardware can vary between runs; committed numbers describe only the recorded run.

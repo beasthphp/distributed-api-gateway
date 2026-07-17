@@ -35,11 +35,12 @@
 
 ## Phase 5 — Performance evidence
 
-- [ ] Go load generator for repeatable end-to-end tests
-- [ ] C++ benchmark client for latency/throughput comparison
-- [ ] p50, p95, and p99 latency report
-- [ ] Single-instance versus multi-instance measurements
-- [ ] Documented bottlenecks and optimization decisions
+- [x] Go load generator for repeatable end-to-end tests
+- [x] C++ benchmark client for latency/throughput comparison
+- [x] p50, p95, and p99 latency report from raw request samples
+- [x] Single-instance versus multi-instance measurements
+- [x] Concurrent shared-quota correctness across three replicas
+- [x] Documented limitations and evidence-based optimization decisions
 
 ## Phase 6 — Portfolio finish
 
