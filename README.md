@@ -1,8 +1,8 @@
 # Distributed API Gateway
 
-A production-style API gateway built in Go to demonstrate backend engineering, persistent API-key management, distributed rate limiting, asynchronous usage processing, reverse proxying, observability, and containerized service deployment.
+A production-style API gateway built in Go to demonstrate backend engineering, persistent API-key management, distributed rate limiting, asynchronous usage processing, reverse proxying, observability, containerized deployment, and evidence-based performance testing.
 
-> Phase 4 adds a hardened VPS deployment and provisioned monitoring, but this remains a learning project rather than a claim of production readiness. The roadmap still covers measured performance evidence and portfolio finish.
+> Phase 5 adds a repeatable Go/C++ benchmark harness and a committed GitHub Actions baseline. This remains a learning project rather than a universal capacity or production-readiness claim; Phase 6 covers the portfolio finish.
 
 ## What is implemented
 
@@ -25,6 +25,9 @@ A production-style API gateway built in Go to demonstrate backend engineering, p
 - Private Redis, PostgreSQL, gateway, Prometheus, and exporter networking
 - Provisioned Grafana dashboard for traffic, errors, latency, quota denials, queues, dependencies, and host saturation
 - Prometheus alert rules, certificate renewal, database backups, deployment, rollback, and incident runbooks
+- Repeatable Go and C++20/libcurl end-to-end benchmark clients
+- Committed raw request samples, p50/p95/p99 analysis, environment metadata, CSV, and SVG report
+- Executable single-/multi-replica and concurrent shared-quota verification
 - Unit tests, race-detector CI, vet, formatting, and image build checks
 
 ## Architecture
@@ -153,6 +156,7 @@ Run verification:
 go test -race ./...
 go vet ./...
 sh scripts/smoke-test.sh
+make benchmark BENCH_OUTPUT=results/current
 ```
 
 ## Repository layout
@@ -167,12 +171,15 @@ internal/store/         PostgreSQL queries and embedded migrations
 internal/usage/         bounded queue, batch worker, retry and dead letters
 internal/metrics/       bounded-cardinality Prometheus metrics
 internal/mockservice/   demonstration upstream services
+internal/benchmark/     benchmark result schema and aggregation
+benchmarks/cpp/         independent C++20/libcurl benchmark client
 deploy/nginx/           public TLS edge templates
 deploy/prometheus/      development and production scrape/alert configuration
 deploy/grafana/         provisioned datasource and production dashboard
 deploy/systemd/         certificate-renewal and backup timers
 docs/                   design, deployment, operations, and roadmap
-scripts/                smoke, deploy, TLS, backup, and validation automation
+scripts/                smoke, benchmark, deploy, TLS, backup, and validation automation
+results/                immutable measured baseline evidence
 ```
 
 ## Design decisions
@@ -191,11 +198,14 @@ scripts/                smoke, deploy, TLS, backup, and validation automation
 - **One public edge:** only Nginx binds public ports; metrics, data stores, and administrative surfaces stay private.
 - **Provisioned observability:** dashboard, scrape targets, and alert rules are versioned and validated alongside the application.
 - **Reproducible operations:** scripts validate, deploy, renew, and back up; runbooks make verification and rollback explicit.
+- **Evidence before optimization:** raw per-request samples, environment metadata, executable assertions, and generated reports keep measured facts separate from interpretation.
 
-See [docs/architecture.md](docs/architecture.md) for deeper trade-offs, [docs/api-key-operations.md](docs/api-key-operations.md) for key administration, [docs/usage-logging.md](docs/usage-logging.md) for pipeline operations, [docs/deployment.md](docs/deployment.md) for VPS operations, and [docs/roadmap.md](docs/roadmap.md) for the next milestones.
+See [docs/architecture.md](docs/architecture.md) for deeper trade-offs, [docs/api-key-operations.md](docs/api-key-operations.md) for key administration, [docs/usage-logging.md](docs/usage-logging.md) for pipeline operations, [docs/deployment.md](docs/deployment.md) for VPS operations, [docs/benchmarking.md](docs/benchmarking.md) for the measured methodology, and [docs/roadmap.md](docs/roadmap.md) for the next milestones.
 
-## Resume-ready description after completion
+## Verified resume-ready bullets
 
-> Built and deployed a Go API gateway with PostgreSQL-backed API-key lifecycle management, per-route plans, an atomic Redis token bucket, bounded asynchronous usage logging, an Nginx/HTTPS edge, provisioned Prometheus/Grafana monitoring, alerting, tested operational runbooks, integration tests, and CI.
+- Built a Go API gateway with PostgreSQL-backed API-key lifecycle management, atomic Redis token-bucket quotas, bounded asynchronous usage logging, an Nginx/HTTPS deployment stack, and provisioned Prometheus/Grafana monitoring.
+- Measured 1,987.70 req/s at p95 30.91 ms on one gateway and 1,827.84 req/s at p95 32.79 ms across three gateways in 2,000-request GitHub Actions scenarios with 0% errors; committed every raw request sample and the runner environment.
+- Verified one shared quota across three replicas under 100 concurrent requests: 4 accepted, 96 denied, all required rate-limit headers present, and the accepted count below the computed maximum of 5.
 
-Only add later roadmap features to the resume after they are implemented and verified.
+These numbers describe the committed runner and workload, not general production capacity. Only add later roadmap features after they are implemented and verified.

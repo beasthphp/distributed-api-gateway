@@ -1,6 +1,6 @@
 # Architecture and design notes
 
-## Current Phase 4 boundary
+## Current Phase 5 boundary
 
 The current milestone places the authenticated request path behind a public TLS edge and adds a private monitoring plane:
 
@@ -106,7 +106,13 @@ Liveness only confirms that the process can serve HTTP. Readiness pings Redis an
 
 Prometheus scrapes the private gateway metrics endpoint, blackbox readiness, Redis, PostgreSQL, and the VPS host. The provisioned Grafana dashboard visualizes traffic, average latency, status codes, rate-limit denials, usage-queue saturation, dependency availability, and host/Redis saturation. Versioned Prometheus rules turn sustained dependency, error, capacity, and usage-loss conditions into alerts.
 
-Average latency is shown because the current dependency-free gateway registry exposes a duration sum and request counter. Phase 5 will add distribution buckets and measured p50/p95/p99 evidence rather than implying percentile precision that is not yet available.
+Average latency remains the live dashboard signal because the dependency-free gateway registry exposes a duration sum and request counter. Phase 5 adds separate end-to-end p50/p95/p99 evidence from committed per-request client samples; it does not relabel the dashboard average as a percentile.
+
+### Performance evidence
+
+The isolated benchmark topology places Nginx in front of one or three gateway replicas while Redis, PostgreSQL, and the mock services remain shared. A benchmark-only response header records the selected gateway address. Both clients fail the multi-replica scenario unless all expected upstreams are observed.
+
+The Go client provides the primary load and executable correctness assertions. The C++20/libcurl client independently measures the same throughput matrix as a reproducibility cross-check. The concurrent quota scenario accepts only `200` and `429`, validates every quota header, rejects transport errors, and verifies that accepted requests remain within the token bucket's time-adjusted upper bound.
 
 ### Production edge and operations
 
@@ -144,8 +150,8 @@ Certbot uses a webroot shared only with Nginx. A bootstrap Compose file solves t
 - Usage rows contain normalized routes and internal UUIDs, never raw keys, query strings, headers, or bodies.
 - Production Compose runs migrations but never development bootstrap, and its example environment contains no development API key.
 
-## Scaling path
+## Scaling evidence and path
 
 The current VPS topology runs one gateway replica behind Nginx, sharing Redis and PostgreSQL with the private monitoring plane. A later topology can add gateway replicas behind the existing Nginx upstream. Each replica has its own bounded in-memory usage queue; idempotent UUID storage remains safe across replicas. Laptop-hosted upstream services connect through Tailscale for the demonstration, while a real production system would normally keep them in the same private infrastructure.
 
-Phase 5 will measure the single-instance baseline before changing replica count, persistence tuning, or metric distributions, so optimization claims remain evidence-based.
+On the recorded four-vCPU GitHub runner, the Go client measured 1,987.70 req/s at p95 30.91 ms with one gateway and 1,827.84 req/s at p95 32.79 ms with three, both with 0% errors. The lower multi-replica throughput is an observation, not proof of a gateway bottleneck: the client, Nginx, gateways, Redis, PostgreSQL, and mock service shared the runner. Dedicated-host repetitions and component profiling should precede tuning or causal claims.
