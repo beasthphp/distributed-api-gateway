@@ -1,17 +1,14 @@
-name: distributed-api-gateway
+name: distributed-api-gateway-benchmark
 
 services:
   redis:
     image: redis:8.4-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis-data:/data
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   postgres:
     image: postgres:18-alpine
@@ -19,14 +16,12 @@ services:
       POSTGRES_USER: gateway
       POSTGRES_PASSWORD: gateway
       POSTGRES_DB: gateway
-    volumes:
-      - postgres-data:/var/lib/postgresql
+    tmpfs: [/var/lib/postgresql]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   user-service:
     build:
@@ -37,10 +32,9 @@ services:
       PORT: "8081"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   order-service:
     build:
@@ -51,10 +45,9 @@ services:
       PORT: "8082"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8082/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   gateway-admin:
     build:
@@ -64,8 +57,8 @@ services:
     command: ["bootstrap"]
     environment:
       DATABASE_URL: "postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable"
-      API_KEY_PEPPER: "${API_KEY_PEPPER:-dev-only-pepper-change-me}"
-      DEV_API_KEY: "${DEV_API_KEY:-dev-key-change-me}"
+      API_KEY_PEPPER: "benchmark-only-pepper-change-me"
+      DEV_API_KEY: "dev-key-change-me"
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,16 +75,14 @@ services:
       ORDER_SERVICE_URL: "http://order-service:8082"
       REDIS_ADDR: "redis:6379"
       DATABASE_URL: "postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable"
-      API_KEY_PEPPER: "${API_KEY_PEPPER:-dev-only-pepper-change-me}"
+      API_KEY_PEPPER: "benchmark-only-pepper-change-me"
       RATE_LIMIT_FAIL_OPEN: "false"
-      USAGE_QUEUE_CAPACITY: "${USAGE_QUEUE_CAPACITY:-1024}"
-      USAGE_BATCH_SIZE: "${USAGE_BATCH_SIZE:-100}"
-      USAGE_FLUSH_INTERVAL: "${USAGE_FLUSH_INTERVAL:-1s}"
-      USAGE_MAX_ATTEMPTS: "${USAGE_MAX_ATTEMPTS:-3}"
-      USAGE_RETRY_BASE_DELAY: "${USAGE_RETRY_BASE_DELAY:-100ms}"
-      USAGE_SHUTDOWN_TIMEOUT: "${USAGE_SHUTDOWN_TIMEOUT:-5s}"
-    ports:
-      - "8080:8080"
+      USAGE_QUEUE_CAPACITY: "8192"
+      USAGE_BATCH_SIZE: "500"
+      USAGE_FLUSH_INTERVAL: "250ms"
+      USAGE_MAX_ATTEMPTS: "3"
+      USAGE_RETRY_BASE_DELAY: "50ms"
+      USAGE_SHUTDOWN_TIMEOUT: "10s"
     depends_on:
       redis:
         condition: service_healthy
@@ -103,26 +94,23 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health/ready"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
-  prometheus:
-    image: prom/prometheus:v3.1.0
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
+  benchmark-proxy:
+    image: nginx:1.31.2-alpine
     volumes:
-      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
+      - ./deploy/nginx/benchmark.conf:/etc/nginx/templates/default.conf.template:ro
     ports:
-      - "9090:9090"
+      - "127.0.0.1:8080:8080"
     depends_on:
       gateway:
         condition: service_healthy
-    restart: unless-stopped
-
-volumes:
-  redis-data:
-  postgres-data:
-  prometheus-data:
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/nginx-health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    read_only: true
+    tmpfs: [/etc/nginx/conf.d, /var/cache/nginx, /var/run]

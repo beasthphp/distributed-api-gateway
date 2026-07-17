@@ -29,6 +29,13 @@ docker compose up --build -d
 sh scripts/smoke-test.sh
 ```
 
+For benchmark-tool or topology changes, also compile both clients and run the isolated matrix when Docker is available:
+
+```bash
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic benchmarks/cpp/main.cpp -o /tmp/cpp-benchmark -pthread $(curl-config --cflags --libs)
+make benchmark BENCH_OUTPUT=results/current
+```
+
 ## Engineering rules
 
 - Keep the gateway stateless; durable identity/policy belongs in PostgreSQL and shared enforcement state belongs in Redis.
@@ -44,3 +51,7 @@ sh scripts/smoke-test.sh
 - Never run `gateway-admin bootstrap` in production or add development credentials to `.env.production.example`.
 - Pin production container images and validate Compose, Prometheus, Nginx, shell, and dashboard configuration in CI.
 - Never use `docker compose down -v` in production runbooks because it removes persistent volumes.
+- Keep benchmark cleanup scoped to the standalone `distributed-api-gateway-benchmark` Compose project.
+- Commit raw per-request samples with the environment manifest; do not hand-edit generated summaries or charts.
+- Keep measured facts separate from interpretation and never compare results from different environments as if they were one controlled experiment.
+- Do not add benchmark numbers to resume text until a committed, reproducible result supports them.
